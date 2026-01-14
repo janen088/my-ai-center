@@ -78,12 +78,6 @@
     "model": "gemini-3.0-pro-preview",
     "messages": []
   },
-  "1985d08d-35f1-4a4c-bab9-80e8a6e3b3d4": {
-    "title": "New Chat",
-    "role": "运动专家",
-    "model": "gemini-3.0-pro-preview",
-    "messages": []
-  },
   "b9471ba4-0d54-40db-aa55-eb840bd684f4": {
     "title": "New Chat",
     "role": "运动专家",
