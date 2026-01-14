@@ -5,31 +5,28 @@ import json
 import uuid
 import time
 
-# ================= 1. 基础配置 (移除隐藏菜单的 CSS) =================
+# ================= 1. 系统配置 =================
 st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
     layout="wide", 
-    initial_sidebar_state="expanded" # 强制展开
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
 <style>
-    /* 全局字体优化 */
+    /* 全局字体 */
     html, body, [class*="css"] { font-family: 'Inter', 'Roboto', sans-serif; color: #1a1a1a; font-size: 14px; }
     
     /* 标题压制 */
     .stMarkdown h1 { font-size: 16px !important; font-weight: 700 !important; margin: 10px 0 !important; }
     .stMarkdown h2 { font-size: 15px !important; font-weight: 600 !important; margin: 8px 0 !important; }
     
-    /* --- 关键修改：不再隐藏 header，确保你能看到展开按钮 --- */
-    /* header {visibility: hidden;}  <-- 这行被我删了 */
-    footer {visibility: hidden;}
-    
-    /* 侧边栏背景 */
+    /* 界面去噪 */
+    header, footer {visibility: hidden;} 
     section[data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E0E0E0; }
     
-    /* 按钮与输入框 */
+    /* 按钮优化 */
     div.stButton > button { background-color: #FFF; border: 1px solid #D1D1D1; color: #333; border-radius: 4px; font-size: 13px; }
     div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
     div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
@@ -37,6 +34,9 @@ st.markdown("""
     /* 聊天气泡 */
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
+    
+    /* Popover (菜单) 样式微调 */
+    div[data-testid="stPopoverBody"] { padding: 10px !important; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,42 +82,55 @@ def save_data(filename, data, sha, message="Update"):
 
 available_models = get_available_models()
 
-# --- 左侧边栏 ---
+# --- 侧边栏 ---
 with st.sidebar:
-    st.markdown("### AI Studio")
-    # 默认选中 Project 模式，这样你一进来就能看到双栏
-    app_mode = st.radio("Mode", ["☁️ Project", "⚡ Flash"], index=0) 
+    st.markdown("**AI Studio**")
+    app_mode = st.radio("Mode", ["☁️ Project", "⚡ Flash"], label_visibility="collapsed")
     st.divider()
 
 # >>>>>>>>>> 场景 A: 闪电模式 <<<<<<<<<<
 if app_mode == "⚡ Flash":
-    st.info("⚡ Flash Mode: No Sidebar, No History.")
-    model_name = st.selectbox("Model", available_models)
+    st.markdown("#### ⚡ Flash Chat")
+    model_name = st.selectbox("Model", available_models, label_visibility="collapsed")
+    
     if "flash_msgs" not in st.session_state: st.session_state.flash_msgs = []
     if st.button("Clear"): st.session_state.flash_msgs = []; st.rerun()
-    
+    st.divider()
+
     for msg in st.session_state.flash_msgs:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        avatar = "▪️" if msg["role"] == "user" else "⚡"
+        with st.chat_message(msg["role"], avatar=avatar):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                with st.expander("Copy"): st.code(msg["content"], language=None)
 
     if prompt := st.chat_input("Ask..."):
+        with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
         st.session_state.flash_msgs.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-        with st.chat_message("assistant"):
+        
+        with st.chat_message("assistant", avatar="⚡"):
             ph = st.empty()
-            model = genai.GenerativeModel(model_name)
-            chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in st.session_state.flash_msgs[:-1]])
-            full = ""
-            for chunk in chat.send_message(prompt, stream=True):
-                if chunk.text: full+=chunk.text; ph.markdown(full)
-            st.session_state.flash_msgs.append({"role": "assistant", "content": full})
+            with st.status("Thinking...", expanded=True) as status:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    hist = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in st.session_state.flash_msgs[:-1]]
+                    chat = model.start_chat(history=hist)
+                    full = ""
+                    for chunk in chat.send_message(prompt, stream=True):
+                        if chunk.text: full += chunk.text; ph.markdown(full + "▌")
+                    ph.markdown(full)
+                    status.update(label="Done", state="complete", expanded=False)
+                    st.session_state.flash_msgs.append({"role": "assistant", "content": full})
+                except Exception as e:
+                    status.update(label="Error", state="error"); st.error(f"{e}")
 
-# >>>>>>>>>> 场景 B: 项目模式 (双栏) <<<<<<<<<<
+# >>>>>>>>>> 场景 B: 项目模式 (单栏 + 顶部菜单) <<<<<<<<<<
 else:
     if "curr_id" not in st.session_state: st.session_state.curr_id = None
     roles, roles_sha = load_data("roles.json")
     chats, chats_sha = load_data("chats.json")
 
-    # 左侧栏内容
+    # 左侧栏
     with st.sidebar:
         if st.button("＋ New Project", type="primary", use_container_width=True):
             st.session_state.curr_id = None; st.rerun()
@@ -130,10 +143,10 @@ else:
                 if st.button(title, key=cid, use_container_width=True, type=btype):
                     st.session_state.curr_id = cid; st.rerun()
         else:
-            st.warning("No chats found.")
+            st.info("No chats.")
             
         st.divider()
-        with st.expander("Roles"):
+        with st.expander("Manage Roles"):
             rn = st.text_input("Role Name"); rp = st.text_area("Prompt")
             if st.button("Save"):
                 if rn and rp: roles[rn]=rp; save_data("roles.json", roles, roles_sha); st.rerun()
@@ -141,55 +154,79 @@ else:
     # 主界面
     if st.session_state.curr_id is None:
         st.markdown("#### New Project")
-        if not roles: st.info("Create a role in sidebar.")
+        if not roles: st.warning("Create a role first.")
         else:
-            c1, c2 = st.columns(2)
-            with c1: sr = st.selectbox("Role", list(roles.keys()))
-            with c2: sm = st.selectbox("Model", available_models)
-            if st.button("Start", type="primary"):
-                nid = str(uuid.uuid4())
-                chats[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
-                save_data("chats.json", chats, chats_sha)
-                st.session_state.curr_id = nid; st.rerun()
+            with st.container(border=True):
+                c1, c2 = st.columns(2)
+                with c1: sr = st.selectbox("Role", list(roles.keys()))
+                with c2: sm = st.selectbox("Model", available_models)
+                if st.button("Start Chat", type="primary"):
+                    nid = str(uuid.uuid4())
+                    chats[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
+                    save_data("chats.json", chats, chats_sha)
+                    st.session_state.curr_id = nid; st.rerun()
     else:
         cid = st.session_state.curr_id
         if cid in chats:
             curr = chats[cid]
             msgs = curr.get("messages", [])
             
-            # === 双栏布局 ===
-            col_chat, col_ctrl = st.columns([3, 1])
+            # === 顶部导航栏 (轻量化管理) ===
+            # 使用两列：左边显示信息，右边放一个“设置”按钮
+            c_info, c_menu = st.columns([8, 1])
             
-            # 右侧控制台
-            with col_ctrl:
-                st.markdown("**Control**")
-                nt = st.text_input("Title", value=curr.get('title',''))
-                if st.button("Rename"):
-                    curr['title'] = nt; chats[cid] = curr; save_data("chats.json", chats, chats_sha); st.rerun()
-                if st.button("Delete"):
-                    del chats[cid]; save_data("chats.json", chats, chats_sha); st.session_state.curr_id = None; st.rerun()
-                st.divider()
-                st.info(f"Role: {curr.get('role')}")
-                
-            # 左侧聊天
-            with col_chat:
-                for msg in msgs:
-                    avatar = "▪️" if msg["role"] == "user" else "▫️"
-                    with st.chat_message(msg["role"], avatar=avatar):
-                        st.markdown(msg["content"])
-                
-                if prompt := st.chat_input("Type..."):
-                    msgs.append({"role": "user", "content": prompt})
-                    if len(msgs)==1: curr["title"] = prompt[:10]
-                    with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
+            with c_info:
+                # 显示：标题 [角色 | 模型]
+                st.markdown(f"**{curr.get('title')}** <span style='color:#888; font-size:12px; margin-left:10px'>{curr.get('role')} · {curr.get('model')}</span>", unsafe_allow_html=True)
+            
+            with c_menu:
+                # === 核心：弹出式菜单 ===
+                with st.popover("⚙️", use_container_width=True):
+                    st.markdown("**Settings**")
+                    new_t = st.text_input("Rename", value=curr.get('title',''))
+                    if st.button("Save Name", use_container_width=True):
+                        if new_t != curr.get('title'):
+                            curr['title'] = new_t; chats[cid] = curr
+                            save_data("chats.json", chats, chats_sha); st.rerun()
                     
-                    with st.chat_message("assistant", avatar="▫️"):
-                        ph = st.empty()
-                        model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
-                        chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
-                        full = ""
-                        for chunk in chat.send_message(prompt, stream=True):
-                            if chunk.text: full+=chunk.text; ph.markdown(full)
-                        msgs.append({"role": "assistant", "content": full})
-                        curr["messages"] = msgs; chats[cid] = curr
-                        save_data("chats.json", chats, chats_sha)
+                    st.divider()
+                    if st.button("🗑️ Delete Chat", type="primary", use_container_width=True):
+                        del chats[cid]; save_data("chats.json", chats, chats_sha)
+                        st.session_state.curr_id = None; st.rerun()
+
+            st.divider()
+
+            # 聊天内容
+            for msg in msgs:
+                avatar = "▪️" if msg["role"] == "user" else "▫️"
+                with st.chat_message(msg["role"], avatar=avatar):
+                    st.markdown(msg["content"])
+                    if msg["role"] == "assistant":
+                        with st.expander("Copy"): st.code(msg["content"], language=None)
+
+            # 输入框
+            if prompt := st.chat_input("Type..."):
+                with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
+                msgs.append({"role": "user", "content": prompt})
+                if len(msgs)==1: curr["title"] = prompt[:10]
+                
+                with st.chat_message("assistant", avatar="▫️"):
+                    ph = st.empty()
+                    with st.status("Thinking...", expanded=True) as status:
+                        try:
+                            model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
+                            chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
+                            full = ""
+                            for chunk in chat.send_message(prompt, stream=True):
+                                if chunk.text: full+=chunk.text; ph.markdown(full + "▌")
+                            ph.markdown(full)
+                            
+                            status.update(label="Saving...", state="running")
+                            msgs.append({"role": "assistant", "content": full})
+                            curr["messages"] = msgs; chats[cid] = curr
+                            
+                            if save_data("chats.json", chats, chats_sha, message=f"Chat {cid}"):
+                                status.update(label="Done", state="complete", expanded=False)
+                            else: status.update(label="Save Failed", state="error")
+                        except Exception as e:
+                            status.update(label="Error", state="error"); st.error(f"{e}")
