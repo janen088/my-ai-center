@@ -1,1 +1,8 @@
-{}
+{
+  "369b4c84-6487-4c0a-8e97-d611e65ffe9c": {
+    "title": "新对话",
+    "role": "运动专家",
+    "model": "gemini-3-pro-preview",
+    "messages": []
+  }
+}
