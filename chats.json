@@ -89,11 +89,5 @@
     "role": "运动专家",
     "model": "gemini-3-pro-preview",
     "messages": []
-  },
-  "af758ecb-135e-4e09-98d1-b207dc613766": {
-    "title": "New Chat",
-    "role": "运动专家",
-    "model": "gemini-3-pro-preview",
-    "messages": []
   }
 }
