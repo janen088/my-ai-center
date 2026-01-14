@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
     layout="wide", 
-    initial_sidebar_state="expanded" # 强制侧边栏默认展开，防止消失
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
@@ -27,11 +27,10 @@ st.markdown("""
     header {visibility: hidden;} 
     footer {visibility: hidden;}
     
-    /* --- 侧边栏优化 (修复缩进问题) --- */
+    /* --- 侧边栏优化 --- */
     section[data-testid="stSidebar"] { 
         background-color: #FAFAFA; 
         border-right: 1px solid #E0E0E0; 
-        /* 移除固定宽度限制，让 Streamlit 自适应，防止崩溃 */
     }
     
     /* --- 按钮风格 (黑白灰) --- */
@@ -59,32 +58,58 @@ st.markdown("""
 
 # ================= 2. 后端服务 (Service 层) =================
 
-# 密钥检查
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
 repo_name = st.secrets.get("REPO_NAME")
 if not api_key: st.stop()
 genai.configure(api_key=api_key)
 
-# 缓存模型列表 (3.0 优先)
+# === 核心修改：火力全开模型列表 ===
 @st.cache_data(ttl=3600)
 def get_available_models():
     try:
-        priority = [
-            "gemini-3.0-pro-preview", 
-            "gemini-experimental",
-            "gemini-2.0-flash-thinking-exp-1219", 
-            "gemini-1.5-pro"
+        # 1. 手动硬编码所有可能的“神仙模型” (不管能不能用，先加上)
+        # gemini-experimental 通常指向最新的测试版 (可能是 3.0)
+        manual_list = [
+            "gemini-experimental", 
+            "gemini-2.0-flash-thinking-exp-1219",
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            # 如果 Google 开放了特定 ID，通常长这样，先加上防身
+            "gemini-3.0-pro-preview",
+            "gemini-3.0-pro-exp"
         ]
-        others = []
+        
+        # 2. 从 API 获取所有官方列表 (不做任何过滤)
+        api_list = []
         for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods and "gemini" in m.name:
-                clean = m.name.replace("models/", "")
-                if clean not in priority: others.append(clean)
-        return priority + sorted(others, reverse=True)
-    except: return ["gemini-3.0-pro-preview", "gemini-1.5-pro"]
+            # 只要支持生成内容，就拿来
+            if 'generateContent' in m.supported_generation_methods:
+                clean_name = m.name.replace("models/", "")
+                api_list.append(clean_name)
+        
+        # 3. 合并 + 去重 + 排序
+        # set 去重，然后转回 list
+        full_set = set(manual_list + api_list)
+        full_list = list(full_set)
+        
+        # 4. 排序逻辑：把 manual_list 里的东西强制排在最前面
+        # 这样你可以优先选到最新的，剩下的按字母倒序
+        final_list = []
+        for m in manual_list:
+            if m in full_list:
+                final_list.append(m)
+                full_list.remove(m)
+        
+        final_list += sorted(full_list, reverse=True)
+        
+        return final_list
+    except Exception as e:
+        # 就算报错，也至少返回手动列表，保证有得选
+        return ["gemini-experimental", "gemini-1.5-pro"]
 
-# GitHub 读写
 def load_data(filename):
     try:
         g = Github(github_token)
@@ -155,7 +180,6 @@ if app_mode == "⚡ Flash":
 
 # >>>>>>>>>> 场景 B: 项目模式 (双栏布局) <<<<<<<<<<
 else:
-    # 加载数据
     if "curr_id" not in st.session_state: st.session_state.curr_id = None
     roles, roles_sha = load_data("roles.json")
     chats, chats_sha = load_data("chats.json")
@@ -181,7 +205,6 @@ else:
 
     # 主界面逻辑
     if st.session_state.curr_id is None:
-        # 新建页面 (单栏居中)
         st.markdown("#### New Project")
         if not roles: st.info("Create a role in sidebar first.")
         else:
@@ -195,44 +218,39 @@ else:
                     save_data("chats.json", chats, chats_sha)
                     st.session_state.curr_id = nid; st.rerun()
     else:
-        # 聊天页面 (双栏：左聊右控)
         cid = st.session_state.curr_id
         if cid in chats:
             curr = chats[cid]
             msgs = curr.get("messages", [])
             
             # === 布局核心：3:1 分栏 ===
-            # 注意：在手机上会自动堆叠，桌面端会分栏
             col_chat, col_ctrl = st.columns([3, 1])
             
-            # --- 右侧控制台 (先定义逻辑，但布局在右) ---
+            # --- 右侧控制台 ---
             with col_ctrl:
                 st.markdown("**Control Panel**")
                 
-                # 1. 重命名
+                # 重命名
                 new_t = st.text_input("Title", value=curr.get('title',''), label_visibility="collapsed")
                 if st.button("Update Title", use_container_width=True):
                     if new_t != curr.get('title'):
                         curr['title'] = new_t; chats[cid] = curr
                         save_data("chats.json", chats, chats_sha); st.rerun()
                 
-                # 2. 删除
+                # 删除
                 if st.button("🗑️ Delete Chat", use_container_width=True):
                     del chats[cid]; save_data("chats.json", chats, chats_sha)
                     st.session_state.curr_id = None; st.rerun()
                 
                 st.divider()
-                
-                # 3. 信息展示
                 st.caption(f"Role: {curr.get('role')}")
                 st.caption(f"Model: {curr.get('model')}")
                 
-                # 4. 时光机 (Focus Mode)
+                # 时光机
                 st.markdown("**History Focus**")
                 total = len(msgs) // 2
                 focus_idx = None
                 if total > 0:
-                    # 使用 Radio 切换模式，更直观
                     view_mode = st.radio("View", ["Full", "Focus"], horizontal=True, label_visibility="collapsed")
                     if view_mode == "Focus":
                         focus_idx = st.slider("Turn", 1, total, total)
@@ -243,7 +261,6 @@ else:
 
             # --- 左侧聊天区 ---
             with col_chat:
-                # 筛选消息
                 if focus_idx:
                     start = (focus_idx - 1) * 2
                     show_msgs = msgs[start : start+2]
@@ -251,7 +268,6 @@ else:
                 else:
                     show_msgs = msgs
 
-                # 渲染消息
                 for msg in show_msgs:
                     avatar = "▪️" if msg["role"] == "user" else "▫️"
                     with st.chat_message(msg["role"], avatar=avatar):
@@ -259,9 +275,7 @@ else:
                         if msg["role"] == "assistant":
                             with st.expander("Copy"): st.code(msg["content"], language=None)
 
-                # 输入框 (始终在底部)
                 if prompt := st.chat_input("Type a message..."):
-                    # 如果在 Focus 模式输入，提示并切回 Full
                     if focus_idx: st.toast("Switched to Full View for new message")
                     
                     with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
@@ -274,7 +288,6 @@ else:
                         with st.status("Thinking...", expanded=True) as status:
                             try:
                                 model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
-                                # 发送完整历史
                                 hist = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]]
                                 chat = model.start_chat(history=hist)
                                 full = ""
