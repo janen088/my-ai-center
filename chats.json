@@ -15,7 +15,7 @@
     ]
   },
   "a5bacfe8-26fb-46de-86d4-0cb09a4b4000": {
-    "title": "你好，你可以自己扩充一下",
+    "title": "扩充角色能力",
     "role": "运动专家",
     "model": "gemini-3-pro-preview",
     "messages": [
