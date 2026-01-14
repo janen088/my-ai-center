@@ -5,7 +5,7 @@ import json
 import uuid
 import time
 
-# ================= 1. 系统配置与 CSS (UI 层) =================
+# ================= 1. 系统配置与 CSS =================
 st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
@@ -15,48 +15,34 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* --- 全局重置 --- */
+    /* 全局字体与重置 */
     html, body, [class*="css"] { font-family: 'Inter', 'Roboto', sans-serif; color: #1a1a1a; font-size: 14px; }
     
-    /* --- 标题暴力压制 (H1-H6) --- */
+    /* 标题压制 */
     .stMarkdown h1 { font-size: 16px !important; font-weight: 700 !important; margin: 10px 0 !important; }
     .stMarkdown h2 { font-size: 15px !important; font-weight: 600 !important; margin: 8px 0 !important; }
-    .stMarkdown h3, .stMarkdown h4, .stMarkdown h5 { font-size: 14px !important; font-weight: 600 !important; margin: 6px 0 !important; }
+    .stMarkdown h3, .stMarkdown h4 { font-size: 14px !important; font-weight: 600 !important; margin: 6px 0 !important; }
     
-    /* --- 界面去噪 --- */
-    header {visibility: hidden;} 
-    footer {visibility: hidden;}
+    /* 界面去噪 */
+    header, footer {visibility: hidden;} 
+    section[data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E0E0E0; }
     
-    /* --- 侧边栏优化 --- */
-    section[data-testid="stSidebar"] { 
-        background-color: #FAFAFA; 
-        border-right: 1px solid #E0E0E0; 
-    }
-    
-    /* --- 按钮风格 (黑白灰) --- */
-    div.stButton > button { 
-        background-color: #FFF; border: 1px solid #D1D1D1; color: #333; 
-        border-radius: 4px; font-size: 13px; padding: 4px 10px; 
-    }
+    /* 按钮与输入框 */
+    div.stButton > button { background-color: #FFF; border: 1px solid #D1D1D1; color: #333; border-radius: 4px; font-size: 13px; }
     div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
     div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
-    
-    /* --- 聊天气泡 (透明化) --- */
-    .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
-    div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { 
-        background-color: #F0F0F0 !important; color: #000 !important; 
-    }
-    
-    /* --- 状态栏与输入框 --- */
-    .stStatusWidget { background-color: #fff !important; border: 1px solid #eee !important; }
     .stChatInputContainer { border-radius: 6px !important; border: 1px solid #E0E0E0 !important; }
     
-    /* --- 右侧控制栏容器 --- */
-    div[data-testid="column"] { padding: 0px 10px; }
+    /* 聊天气泡 */
+    .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
+    div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
+    
+    /* 右侧栏微调 */
+    div[data-testid="column"] { padding: 0px 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 2. 后端服务 (Service 层) =================
+# ================= 2. 后端服务 =================
 
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
@@ -64,26 +50,18 @@ repo_name = st.secrets.get("REPO_NAME")
 if not api_key: st.stop()
 genai.configure(api_key=api_key)
 
-# === 核心修改：老实人模式 ===
+# 模型列表 (老实人模式：全量展示)
 @st.cache_data(ttl=3600)
 def get_available_models():
     try:
         model_list = []
-        # 直接问 Google：你有什么？
         for m in genai.list_models():
-            # 条件1: 支持生成内容
-            # 条件2: 名字里带 gemini
             if 'generateContent' in m.supported_generation_methods and "gemini" in m.name:
-                # 去掉前缀，只留纯名字
-                clean_name = m.name.replace("models/", "")
-                model_list.append(clean_name)
-        
-        # 纯字母倒序排列 (通常 2.0 > 1.5，所以数字大的会在前面)
+                model_list.append(m.name.replace("models/", ""))
         return sorted(model_list, reverse=True)
-    except Exception as e:
-        # 万一断网了，给个保底
-        return ["gemini-1.5-pro", "gemini-1.5-flash"]
+    except: return ["gemini-1.5-pro", "gemini-1.5-flash"]
 
+# GitHub 读写 (带错误提示)
 def load_data(filename):
     try:
         g = Github(github_token)
@@ -91,8 +69,11 @@ def load_data(filename):
         try:
             c = repo.get_contents(filename)
             return json.loads(c.decoded_content.decode()), c.sha
-        except: return {}, None
-    except: return {}, None
+        except: 
+            return {}, None # 文件不存在，返回空
+    except Exception as e:
+        st.error(f"GitHub 连接失败: {e}") # 显式报错
+        return {}, None
 
 def save_data(filename, data, sha, message="Update"):
     try:
@@ -103,20 +84,20 @@ def save_data(filename, data, sha, message="Update"):
         else: repo.create_file(filename, "Init", c_str)
         return True
     except Exception as e:
-        print(f"Save Error: {e}")
+        st.error(f"保存失败: {e}")
         return False
 
-# ================= 3. 业务逻辑 (Controller 层) =================
+# ================= 3. 业务逻辑 =================
 
 available_models = get_available_models()
 
-# --- 左侧边栏 (导航) ---
+# 侧边栏：模式切换
 with st.sidebar:
     st.markdown("**AI Studio**")
     app_mode = st.radio("Mode", ["☁️ Project", "⚡ Flash"], label_visibility="collapsed")
     st.divider()
 
-# >>>>>>>>>> 场景 A: 闪电模式 (无右侧栏) <<<<<<<<<<
+# >>>>>>>>>> 场景 A: 闪电模式 <<<<<<<<<<
 if app_mode == "⚡ Flash":
     st.markdown("#### ⚡ Flash Chat")
     model_name = st.selectbox("Model", available_models, label_visibility="collapsed")
@@ -152,24 +133,27 @@ if app_mode == "⚡ Flash":
                 except Exception as e:
                     status.update(label="Error", state="error"); st.error(f"{e}")
 
-# >>>>>>>>>> 场景 B: 项目模式 (双栏布局) <<<<<<<<<<
+# >>>>>>>>>> 场景 B: 项目模式 (双栏) <<<<<<<<<<
 else:
+    # 1. 加载数据
     if "curr_id" not in st.session_state: st.session_state.curr_id = None
     roles, roles_sha = load_data("roles.json")
     chats, chats_sha = load_data("chats.json")
 
-    # 左侧栏：项目列表 & 角色管理
+    # 2. 渲染左侧列表 (确保无论如何都显示)
     with st.sidebar:
         if st.button("＋ New Project", type="primary", use_container_width=True):
             st.session_state.curr_id = None; st.rerun()
         
+        st.caption("History")
         if chats:
-            st.caption("History")
             for cid in list(chats.keys())[::-1]:
                 title = chats[cid].get('title', 'Untitled')
                 btype = "primary" if st.session_state.curr_id == cid else "secondary"
                 if st.button(title, key=cid, use_container_width=True, type=btype):
                     st.session_state.curr_id = cid; st.rerun()
+        else:
+            st.info("No chats found.") # 显式提示空状态
         
         st.divider()
         with st.expander("Manage Roles"):
@@ -177,10 +161,10 @@ else:
             if st.button("Save Role"):
                 if rn and rp: roles[rn]=rp; save_data("roles.json", roles, roles_sha); st.rerun()
 
-    # 主界面逻辑
+    # 3. 主界面
     if st.session_state.curr_id is None:
         st.markdown("#### New Project")
-        if not roles: st.info("Create a role in sidebar first.")
+        if not roles: st.warning("Please create a role in the sidebar first.")
         else:
             with st.container(border=True):
                 c1, c2 = st.columns(2)
@@ -197,22 +181,19 @@ else:
             curr = chats[cid]
             msgs = curr.get("messages", [])
             
-            # === 布局核心：3:1 分栏 ===
+            # 双栏布局
             col_chat, col_ctrl = st.columns([3, 1])
             
             # --- 右侧控制台 ---
             with col_ctrl:
-                st.markdown("**Control Panel**")
-                
-                # 重命名
+                st.markdown("**Control**")
                 new_t = st.text_input("Title", value=curr.get('title',''), label_visibility="collapsed")
                 if st.button("Update Title", use_container_width=True):
                     if new_t != curr.get('title'):
                         curr['title'] = new_t; chats[cid] = curr
                         save_data("chats.json", chats, chats_sha); st.rerun()
                 
-                # 删除
-                if st.button("🗑️ Delete Chat", use_container_width=True):
+                if st.button("🗑️ Delete", use_container_width=True):
                     del chats[cid]; save_data("chats.json", chats, chats_sha)
                     st.session_state.curr_id = None; st.rerun()
                 
@@ -220,8 +201,7 @@ else:
                 st.caption(f"Role: {curr.get('role')}")
                 st.caption(f"Model: {curr.get('model')}")
                 
-                # 时光机
-                st.markdown("**History Focus**")
+                st.markdown("**Focus**")
                 total = len(msgs) // 2
                 focus_idx = None
                 if total > 0:
@@ -233,7 +213,7 @@ else:
                             st.info(f"Q: {q[:30]}...")
                         except: pass
 
-            # --- 左侧聊天区 ---
+            # --- 左侧聊天 ---
             with col_chat:
                 if focus_idx:
                     start = (focus_idx - 1) * 2
@@ -249,8 +229,8 @@ else:
                         if msg["role"] == "assistant":
                             with st.expander("Copy"): st.code(msg["content"], language=None)
 
-                if prompt := st.chat_input("Type a message..."):
-                    if focus_idx: st.toast("Switched to Full View for new message")
+                if prompt := st.chat_input("Type..."):
+                    if focus_idx: st.toast("Switched to Full View")
                     
                     with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
                     msgs.append({"role": "user", "content": prompt})
