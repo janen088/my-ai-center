@@ -4,82 +4,88 @@ from github import Github
 import json
 import uuid
 
-# ================= 1. 基础配置 & 强力 CSS 注入 =================
-st.set_page_config(page_title="Lee's AI Studio", page_icon="💠", layout="wide")
+# ================= 1. 基础配置 & 工业风 CSS =================
+st.set_page_config(page_title="AI Studio", page_icon="▪️", layout="wide")
 
-# 注入 CSS：这是改变气质的关键
 st.markdown("""
 <style>
-    /* 1. 全局字体压缩：强制 14px，行高紧凑 */
+    /* --- 全局字体强制 --- */
     html, body, [class*="css"] {
-        font-family: 'Roboto', 'Inter', sans-serif;
-        font-size: 14px !important;
-        line-height: 1.5 !important;
+        font-family: 'Inter', 'Roboto', sans-serif;
+        color: #1a1a1a;
     }
+
+    /* --- 暴力压制 Markdown 里的标题字号 --- */
+    /* 无论 AI 输出什么大标题，全部按住头压小 */
+    .stMarkdown h1 { font-size: 16px !important; font-weight: 700 !important; margin-top: 10px !important; }
+    .stMarkdown h2 { font-size: 15px !important; font-weight: 600 !important; margin-top: 10px !important; }
+    .stMarkdown h3 { font-size: 14px !important; font-weight: 600 !important; margin-top: 5px !important; }
+    .stMarkdown p  { font-size: 14px !important; line-height: 1.6 !important; }
+    .stMarkdown li { font-size: 14px !important; }
     
-    /* 2. 隐藏 Streamlit 自带的红条、菜单、页脚 */
+    /* --- 界面去噪 --- */
     header {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* 3. 侧边栏优化：去边框，极简 */
+    /* --- 侧边栏：纯粹的灰白 --- */
     section[data-testid="stSidebar"] {
-        width: 260px !important; # 变窄一点
-        border-right: 1px solid #E5E7EB;
+        background-color: #FAFAFA;
+        border-right: 1px solid #E0E0E0;
+        width: 250px !important;
     }
     
-    /* 4. 按钮样式：Google 风格的圆角和蓝色文字 */
+    /* --- 按钮：黑白灰风格 --- */
     div.stButton > button {
-        background-color: transparent;
-        border: 1px solid #DADCE0;
-        color: #3C4043;
-        border-radius: 4px;
+        background-color: #FFFFFF;
+        border: 1px solid #D1D1D1;
+        color: #333333;
+        border-radius: 4px; /* 直角微圆，更硬朗 */
         font-size: 13px;
-        padding: 4px 12px;
-        height: auto;
+        padding: 4px 10px;
+        box-shadow: none;
     }
     div.stButton > button:hover {
-        border-color: #1A73E8;
-        color: #1A73E8;
-        background-color: #F1F3F4;
+        border-color: #000000; /* 悬停变黑 */
+        color: #000000;
+        background-color: #F5F5F5;
     }
-    /* 主按钮实心蓝 */
+    /* 主按钮：纯黑实心 */
     div.stButton > button[kind="primary"] {
-        background-color: #1A73E8;
-        color: white;
-        border: none;
+        background-color: #000000;
+        color: #FFFFFF;
+        border: 1px solid #000000;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #333333;
     }
 
-    /* 5. 聊天气泡去色去框：像 AI Studio 一样沉浸 */
+    /* --- 聊天气泡：完全透明，纯文字流 --- */
     .stChatMessage {
         background-color: transparent !important;
         border: none !important;
-        padding: 5px 0px !important;
+        padding: 0px !important;
+        margin-bottom: 10px !important;
     }
-    /* 用户头像背景 */
-    div[data-testid="stChatMessageAvatarUser"] {
-        background-color: #E8EAED !important;
-    }
-    /* AI 头像背景 */
+    /* 头像去色 */
+    div[data-testid="stChatMessageAvatarUser"], 
     div[data-testid="stChatMessageAvatarAssistant"] {
-        background-color: #E8F0FE !important;
+        background-color: #F0F0F0 !important;
+        color: #000000 !important;
     }
 
-    /* 6. 输入框优化 */
+    /* --- 输入框：极细灰线 --- */
     .stChatInputContainer {
-        border-radius: 8px !important;
-        border-color: #DADCE0 !important;
+        border-radius: 6px !important;
+        border: 1px solid #E0E0E0 !important;
     }
     
-    /* 7. 标题字号压制 */
-    h1 { font-size: 18px !important; color: #202124; margin-bottom: 0px;}
-    h2 { font-size: 16px !important; color: #202124; }
-    h3 { font-size: 14px !important; font-weight: 600; }
-    
-    /* 8. 去掉顶部空白 */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
+    /* --- 顶部导航栏微调 --- */
+    .top-nav {
+        font-size: 14px;
+        border-bottom: 1px solid #E0E0E0;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -90,12 +96,12 @@ github_token = st.secrets.get("GITHUB_TOKEN")
 repo_name = st.secrets.get("REPO_NAME")
 
 if not api_key or not github_token or not repo_name:
-    st.error("⚠️ 缺少密钥")
+    st.error("⚠️ Secrets Error")
     st.stop()
 
 genai.configure(api_key=api_key)
 
-# ================= 2. 核心逻辑 =================
+# ================= 2. 核心逻辑 (不变) =================
 
 @st.cache_data(ttl=3600)
 def get_available_models():
@@ -136,7 +142,7 @@ def save_data(filename, data, sha, message="Update"):
     except:
         return False
 
-# ================= 3. 极简界面 =================
+# ================= 3. 黑白极简界面 =================
 
 if "current_chat_id" not in st.session_state:
     st.session_state.current_chat_id = None
@@ -147,7 +153,7 @@ available_models = get_available_models()
 
 # --- 侧边栏 ---
 with st.sidebar:
-    st.markdown("### Lee's AI Studio")
+    st.markdown("**AI Studio**") # 纯黑加粗小字
     
     if st.button("＋ New Chat", type="primary", use_container_width=True):
         st.session_state.current_chat_id = None
@@ -160,8 +166,9 @@ with st.sidebar:
         for chat_id in chat_ids:
             chat_info = chats_data[chat_id]
             title = chat_info.get('title', 'Untitled')
-            # 极简按钮
-            if st.button(title, key=chat_id, use_container_width=True):
+            # 选中状态：黑色实心；未选中：灰色文字
+            btn_type = "primary" if st.session_state.current_chat_id == chat_id else "secondary"
+            if st.button(title, key=chat_id, use_container_width=True, type=btn_type):
                 st.session_state.current_chat_id = chat_id
                 st.rerun()
     else:
@@ -179,12 +186,12 @@ with st.sidebar:
 
 # --- 主界面 ---
 
-# 场景 A: 新建页 (极简)
+# 场景 A: 新建页
 if st.session_state.current_chat_id is None:
-    st.markdown("### Welcome back")
+    st.markdown("#### New Session")
     
     if not roles_data:
-        st.info("Please create a system prompt in the sidebar.")
+        st.info("Create a prompt in sidebar.")
     else:
         with st.container(border=True):
             c1, c2 = st.columns([1,1])
@@ -196,7 +203,7 @@ if st.session_state.current_chat_id is None:
             st.caption(f"Preview: {roles_data[selected_role][:80]}...")
             st.markdown("")
             
-            if st.button("Run", type="primary"):
+            if st.button("Start", type="primary"):
                 new_id = str(uuid.uuid4())
                 chats_data[new_id] = {
                     "title": "New Chat",
@@ -208,7 +215,7 @@ if st.session_state.current_chat_id is None:
                 st.session_state.current_chat_id = new_id
                 st.rerun()
 
-# 场景 B: 聊天页 (极简)
+# 场景 B: 聊天页
 else:
     chat_id = st.session_state.current_chat_id
     if chat_id not in chats_data:
@@ -221,29 +228,26 @@ else:
     messages = current_chat.get("messages", [])
     model_ver = current_chat.get("model", "gemini-1.5-pro")
 
-    # 顶部极简信息条
-    c1, c2, c3 = st.columns([6, 2, 1])
-    with c1:
-        st.markdown(f"**{role_name}** <span style='color:gray; font-size:12px'>via {model_ver}</span>", unsafe_allow_html=True)
-    with c3:
-        if st.button("Del", key="del"):
-            del chats_data[chat_id]
-            save_data("chats.json", chats_data, chats_sha)
-            st.session_state.current_chat_id = None
-            st.rerun()
+    # 顶部极简信息条 (手写 HTML 模拟导航栏)
+    st.markdown(f"""
+    <div class="top-nav">
+        <b>{role_name}</b> <span style="color:#666; margin-left:10px;">{model_ver}</span>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.divider()
-
+    # 删除按钮独立放右上角太难对齐，直接放到底部或者作为小功能
+    # 这里为了极致简洁，我们把删除放在侧边栏或者新建时处理，或者在底部放一个小小的文本按钮
+    
     # 聊天流
     for msg in messages:
-        # 自定义头像：用户用简单的圆点，AI用闪光
-        avatar = "👤" if msg["role"] == "user" else "💠"
+        # 纯黑白头像
+        avatar = "▪️" if msg["role"] == "user" else "▫️"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
     # 输入框
     if user_input := st.chat_input("Type a message..."):
-        with st.chat_message("user", avatar="👤"):
+        with st.chat_message("user", avatar="▪️"):
             st.markdown(user_input)
         
         messages.append({"role": "user", "content": user_input})
@@ -254,7 +258,7 @@ else:
             history_gemini = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in messages[:-1]]
             chat = model.start_chat(history=history_gemini)
             
-            with st.chat_message("assistant", avatar="💠"):
+            with st.chat_message("assistant", avatar="▫️"):
                 placeholder = st.empty()
                 full_response = ""
                 stream = chat.send_message(user_input, stream=True)
@@ -271,3 +275,10 @@ else:
             
         except Exception as e:
             st.error(f"Error: {e}")
+    
+    # 底部极简删除
+    if st.button("Delete Chat", key="del_bottom"):
+        del chats_data[chat_id]
+        save_data("chats.json", chats_data, chats_sha)
+        st.session_state.current_chat_id = None
+        st.rerun()
