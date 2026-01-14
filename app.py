@@ -1,6 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
-from github import Github
+from github import Github, GithubException
 import json
 
 # ================= 1. 基础配置 =================
@@ -17,31 +17,48 @@ if not api_key or not github_token or not repo_name:
 
 genai.configure(api_key=api_key)
 
-# ================= 2. GitHub 数据读写 =================
+# ================= 2. GitHub 数据读写 (智能容错版) =================
 def get_roles():
     """读取角色列表"""
     try:
         g = Github(github_token)
         repo = g.get_repo(repo_name)
-        contents = repo.get_contents("roles.json")
-        return json.loads(contents.decoded_content.decode()), contents.sha
-    except:
+        # 尝试读取文件
+        try:
+            contents = repo.get_contents("roles.json")
+            return json.loads(contents.decoded_content.decode()), contents.sha
+        except:
+            # 如果文件不存在，返回空字典和 None
+            return {}, None
+    except Exception as e:
+        st.error(f"连接 GitHub 仓库失败: {e}\n请检查 Secrets 里的 REPO_NAME 是否写对 (格式: 用户名/仓库名)")
         return {}, None
 
 def save_roles(roles, sha):
-    """保存角色列表"""
+    """保存角色列表 (自动判断新建还是更新)"""
     try:
         g = Github(github_token)
         repo = g.get_repo(repo_name)
-        repo.update_file(
-            path="roles.json",
-            message="Update via App",
-            content=json.dumps(roles, indent=2, ensure_ascii=False),
-            sha=sha
-        )
+        content_str = json.dumps(roles, indent=2, ensure_ascii=False)
+        
+        if sha:
+            # 如果有 SHA，说明文件存在，进行更新
+            repo.update_file(
+                path="roles.json",
+                message="Update via App",
+                content=content_str,
+                sha=sha
+            )
+        else:
+            # 如果没有 SHA，说明文件不存在，直接创建
+            repo.create_file(
+                path="roles.json",
+                message="Create roles.json (Init)",
+                content=content_str
+            )
         return True
     except Exception as e:
-        st.error(f"保存失败: {e}")
+        st.error(f"保存失败详细原因: {e}")
         return False
 
 # ================= 3. 页面布局 =================
@@ -56,65 +73,57 @@ tab1, tab2 = st.tabs(["💬 开始对话", "⚙️ 角色管理 (增删改名)"]
 # ================= Tab 1: 聊天区域 =================
 with tab1:
     if not roles_data:
-        st.warning("还没有角色，请去【角色管理】里添加一个！")
+        st.info("👋 欢迎！目前还没有角色。请点击上方的【⚙️ 角色管理】去新建一个吧！")
     else:
-        # 侧边栏：这里就是你刚才报错的地方，我已经修好了缩进
         with st.sidebar:
             st.header("🧠 大脑设置")
-            
-            # 这里是你想要的 3.0 模型列表
             model_version = st.selectbox(
                 "选择模型", 
-                ["gemini-3.0-pro-001", "gemini-3.0-flash", "gemini-2.0-flash"]
+                ["gemini-3.0-pro", "gemini-3.0-flash", "gemini-2.0-flash"]
             )
-            
             if st.button("🧹 清空聊天记录"):
                 st.session_state.messages = []
                 st.rerun()
 
-        # 选择聊天对象
-        selected_role_name = st.selectbox("👉 选择你要对话的角色：", list(roles_data.keys()))
-        current_prompt = roles_data[selected_role_name]
+        # 确保选中的角色还在列表里
+        role_names = list(roles_data.keys())
+        selected_role_name = st.selectbox("👉 选择你要对话的角色：", role_names)
         
-        # 显示当前设定的预览
-        with st.expander(f"查看【{selected_role_name}】的记忆设定"):
-            st.info(current_prompt)
+        if selected_role_name:
+            current_prompt = roles_data[selected_role_name]
+            with st.expander(f"查看【{selected_role_name}】的记忆设定"):
+                st.info(current_prompt)
 
-        # 聊天逻辑
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+            # 聊天逻辑
+            if "messages" not in st.session_state:
+                st.session_state.messages = []
 
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
 
-        if user_input := st.chat_input("说点什么..."):
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            st.session_state.messages.append({"role": "user", "content": user_input})
+            if user_input := st.chat_input("说点什么..."):
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+                st.session_state.messages.append({"role": "user", "content": user_input})
 
-            try:
-                # 构造历史
-                history = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
-                
-                model = genai.GenerativeModel(model_version)
-                chat = model.start_chat(history=history)
-                
-                # 发送请求
-                response = chat.send_message(f"【系统指令】：{current_prompt}\n\n【用户】：{user_input}")
-                
-                with st.chat_message("assistant"):
-                    st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                st.error(f"出错: {e}")
+                try:
+                    history = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
+                    model = genai.GenerativeModel(model_version)
+                    chat = model.start_chat(history=history)
+                    response = chat.send_message(f"【系统指令】：{current_prompt}\n\n【用户】：{user_input}")
+                    
+                    with st.chat_message("assistant"):
+                        st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"出错: {e}")
 
 # ================= Tab 2: 管理区域 =================
 with tab2:
     st.header("🛠️ 管理你的角色库")
     
-    action = st.radio("你想做什么？", ["✏️ 编辑/改名/删除现有角色", "➕ 新建一个角色"], horizontal=True)
-    
+    action = st.radio("你想做什么？", ["➕ 新建一个角色", "✏️ 编辑/改名/删除现有角色"], horizontal=True)
     st.divider()
 
     if action == "➕ 新建一个角色":
@@ -127,6 +136,7 @@ with tab2:
                     st.error("这个名字已经有了，请换一个！")
                 else:
                     roles_data[new_name] = new_prompt
+                    # 这里会调用智能保存逻辑
                     if save_roles(roles_data, file_sha):
                         st.success(f"成功创建：{new_name}")
                         st.rerun()
@@ -135,33 +145,34 @@ with tab2:
 
     else: # 编辑模式
         if not roles_data:
-            st.info("还没有角色，先去新建一个吧")
+            st.warning("还没有角色，先去新建一个吧")
         else:
             edit_target = st.selectbox("选择要编辑的角色", list(roles_data.keys()))
-            old_prompt = roles_data[edit_target]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                edited_name = st.text_input("角色名称 (修改这里即可改名)", value=edit_target)
-            with col2:
-                edited_prompt = st.text_area("角色设定", value=old_prompt, height=150)
-            
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                if st.button("💾 保存修改", type="primary"):
-                    if edited_name != edit_target:
+            if edit_target:
+                old_prompt = roles_data[edit_target]
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    edited_name = st.text_input("角色名称 (修改这里即可改名)", value=edit_target)
+                with col2:
+                    edited_prompt = st.text_area("角色设定", value=old_prompt, height=150)
+                
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    if st.button("💾 保存修改", type="primary"):
+                        if edited_name != edit_target:
+                            del roles_data[edit_target]
+                            roles_data[edited_name] = edited_prompt
+                        else:
+                            roles_data[edit_target] = edited_prompt
+                        
+                        if save_roles(roles_data, file_sha):
+                            st.toast("✅ 修改已保存！")
+                            st.rerun()
+                
+                with c2:
+                    if st.button("🗑️ 删除这个角色"):
                         del roles_data[edit_target]
-                        roles_data[edited_name] = edited_prompt
-                    else:
-                        roles_data[edit_target] = edited_prompt
-                    
-                    if save_roles(roles_data, file_sha):
-                        st.toast("✅ 修改已保存！")
-                        st.rerun()
-            
-            with c2:
-                if st.button("🗑️ 删除这个角色"):
-                    del roles_data[edit_target]
-                    if save_roles(roles_data, file_sha):
-                        st.toast("🗑️ 已删除")
-                        st.rerun()
+                        if save_roles(roles_data, file_sha):
+                            st.toast("🗑️ 已删除")
+                            st.rerun()
