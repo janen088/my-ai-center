@@ -3,105 +3,72 @@ import google.generativeai as genai
 from github import Github
 import json
 import uuid
+import time
 
-# ================= 1. 基础配置 & 工业风 CSS =================
+# ================= 1. 基础配置 & 强力 CSS (地毯式修复字号) =================
 st.set_page_config(page_title="AI Studio", page_icon="▪️", layout="wide")
 
 st.markdown("""
 <style>
-    /* --- 全局字体强制 --- */
+    /* --- 全局字体基准 --- */
     html, body, [class*="css"] {
         font-family: 'Inter', 'Roboto', sans-serif;
         color: #1a1a1a;
+        font-size: 14px; /* 正文基准 */
     }
 
-    /* --- 暴力压制 Markdown 里的标题字号 --- */
-    /* 无论 AI 输出什么大标题，全部按住头压小 */
-    .stMarkdown h1 { font-size: 16px !important; font-weight: 700 !important; margin-top: 10px !important; }
-    .stMarkdown h2 { font-size: 15px !important; font-weight: 600 !important; margin-top: 10px !important; }
-    .stMarkdown h3 { font-size: 14px !important; font-weight: 600 !important; margin-top: 5px !important; }
-    .stMarkdown p  { font-size: 14px !important; line-height: 1.6 !important; }
-    .stMarkdown li { font-size: 14px !important; }
+    /* --- 暴力压制所有标题 (H1-H6) --- */
+    /* 无论层级多深，最大不超过 16px，最小不低于 13px */
+    .stMarkdown h1 { font-size: 16px !important; font-weight: 700 !important; margin: 12px 0 8px 0 !important; }
+    .stMarkdown h2 { font-size: 15px !important; font-weight: 600 !important; margin: 10px 0 6px 0 !important; }
+    .stMarkdown h3 { font-size: 14px !important; font-weight: 600 !important; margin: 8px 0 4px 0 !important; }
+    .stMarkdown h4 { font-size: 14px !important; font-weight: 500 !important; font-style: italic; margin: 6px 0 2px 0 !important; }
+    .stMarkdown h5, .stMarkdown h6 { font-size: 13px !important; font-weight: 500 !important; color: #555 !important; }
+    
+    /* --- 修复列表和正文的间距 --- */
+    .stMarkdown p { font-size: 14px !important; line-height: 1.6 !important; margin-bottom: 8px !important; }
+    .stMarkdown li { font-size: 14px !important; line-height: 1.6 !important; }
     
     /* --- 界面去噪 --- */
-    header {visibility: hidden;}
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    header, #MainMenu, footer {visibility: hidden;}
     
-    /* --- 侧边栏：纯粹的灰白 --- */
-    section[data-testid="stSidebar"] {
-        background-color: #FAFAFA;
-        border-right: 1px solid #E0E0E0;
-        width: 250px !important;
+    /* --- 侧边栏 --- */
+    section[data-testid="stSidebar"] { 
+        background-color: #FAFAFA; 
+        border-right: 1px solid #E0E0E0; 
+        width: 250px !important; 
     }
     
-    /* --- 按钮：黑白灰风格 --- */
-    div.stButton > button {
-        background-color: #FFFFFF;
-        border: 1px solid #D1D1D1;
-        color: #333333;
-        border-radius: 4px; /* 直角微圆，更硬朗 */
-        font-size: 13px;
-        padding: 4px 10px;
-        box-shadow: none;
+    /* --- 按钮 (黑白灰) --- */
+    div.stButton > button { 
+        background-color: #FFF; border: 1px solid #D1D1D1; color: #333; 
+        border-radius: 4px; font-size: 13px; padding: 4px 10px; 
     }
-    div.stButton > button:hover {
-        border-color: #000000; /* 悬停变黑 */
-        color: #000000;
-        background-color: #F5F5F5;
-    }
-    /* 主按钮：纯黑实心 */
-    div.stButton > button[kind="primary"] {
-        background-color: #000000;
-        color: #FFFFFF;
-        border: 1px solid #000000;
-    }
-    div.stButton > button[kind="primary"]:hover {
-        background-color: #333333;
-    }
-
-    /* --- 聊天气泡：完全透明，纯文字流 --- */
-    .stChatMessage {
-        background-color: transparent !important;
-        border: none !important;
-        padding: 0px !important;
-        margin-bottom: 10px !important;
-    }
-    /* 头像去色 */
-    div[data-testid="stChatMessageAvatarUser"], 
-    div[data-testid="stChatMessageAvatarAssistant"] {
-        background-color: #F0F0F0 !important;
-        color: #000000 !important;
-    }
-
-    /* --- 输入框：极细灰线 --- */
-    .stChatInputContainer {
-        border-radius: 6px !important;
-        border: 1px solid #E0E0E0 !important;
+    div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
+    div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
+    
+    /* --- 聊天气泡 (透明+紧凑) --- */
+    .stChatMessage { background-color: transparent !important; border: none !important; padding: 0px !important; }
+    div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { 
+        background-color: #F0F0F0 !important; color: #000 !important; 
     }
     
-    /* --- 顶部导航栏微调 --- */
-    .top-nav {
-        font-size: 14px;
-        border-bottom: 1px solid #E0E0E0;
-        padding-bottom: 10px;
-        margin-bottom: 20px;
-    }
+    /* --- 状态栏 (Thinking) --- */
+    .stStatusWidget { background-color: #fff !important; border: 1px solid #eee !important; }
+    
+    /* --- 复制框 (Expander) --- */
+    .streamlit-expanderHeader { font-size: 12px !important; color: #666 !important; background-color: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# 读取密钥
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
 repo_name = st.secrets.get("REPO_NAME")
 
-if not api_key or not github_token or not repo_name:
-    st.error("⚠️ Secrets Error")
-    st.stop()
-
+if not api_key: st.stop()
 genai.configure(api_key=api_key)
 
-# ================= 2. 核心逻辑 (不变) =================
+# ================= 2. 核心逻辑 =================
 
 @st.cache_data(ttl=3600)
 def get_available_models():
@@ -124,161 +91,147 @@ def load_data(filename):
         try:
             contents = repo.get_contents(filename)
             return json.loads(contents.decoded_content.decode()), contents.sha
-        except:
-            return {}, None
-    except:
-        return {}, None
+        except: return {}, None
+    except: return {}, None
 
 def save_data(filename, data, sha, message="Update"):
     try:
         g = Github(github_token)
         repo = g.get_repo(repo_name)
         content_str = json.dumps(data, indent=2, ensure_ascii=False)
-        if sha:
-            repo.update_file(filename, message, content_str, sha)
-        else:
-            repo.create_file(filename, "Init", content_str)
+        if sha: repo.update_file(filename, message, content_str, sha)
+        else: repo.create_file(filename, "Init", content_str)
         return True
-    except:
+    except Exception as e:
+        print(f"Save Error: {e}")
         return False
 
-# ================= 3. 黑白极简界面 =================
+# ================= 3. 界面逻辑 =================
 
-if "current_chat_id" not in st.session_state:
-    st.session_state.current_chat_id = None
-
-roles_data, roles_sha = load_data("roles.json")
-chats_data, chats_sha = load_data("chats.json")
 available_models = get_available_models()
 
-# --- 侧边栏 ---
 with st.sidebar:
-    st.markdown("**AI Studio**") # 纯黑加粗小字
-    
-    if st.button("＋ New Chat", type="primary", use_container_width=True):
-        st.session_state.current_chat_id = None
-        st.rerun()
-    
+    st.markdown("**AI Studio**")
+    app_mode = st.radio("Mode", ["☁️ Project (Auto-Save)", "⚡ Flash (No Save)"], label_visibility="collapsed")
     st.markdown("---")
+
+# >>>>>>>>>> 模式一：闪电模式 (Flash) <<<<<<<<<<
+if app_mode == "⚡ Flash (No Save)":
+    st.markdown("#### ⚡ Flash Chat")
+    model_name = st.selectbox("Model", available_models, label_visibility="collapsed")
     
-    if chats_data:
-        chat_ids = list(chats_data.keys())[::-1]
-        for chat_id in chat_ids:
-            chat_info = chats_data[chat_id]
-            title = chat_info.get('title', 'Untitled')
-            # 选中状态：黑色实心；未选中：灰色文字
-            btn_type = "primary" if st.session_state.current_chat_id == chat_id else "secondary"
-            if st.button(title, key=chat_id, use_container_width=True, type=btn_type):
-                st.session_state.current_chat_id = chat_id
-                st.rerun()
-    else:
-        st.caption("No history")
+    if "flash_messages" not in st.session_state: st.session_state.flash_messages = []
+    if st.button("Clear"): st.session_state.flash_messages = []; st.rerun()
+    st.divider()
 
-    st.markdown("---")
-    with st.expander("System Prompts"):
-        new_role_name = st.text_input("Name")
-        new_role_prompt = st.text_area("Instructions")
-        if st.button("Save"):
-            if new_role_name and new_role_prompt:
-                roles_data[new_role_name] = new_role_prompt
-                save_data("roles.json", roles_data, roles_sha)
-                st.rerun()
-
-# --- 主界面 ---
-
-# 场景 A: 新建页
-if st.session_state.current_chat_id is None:
-    st.markdown("#### New Session")
-    
-    if not roles_data:
-        st.info("Create a prompt in sidebar.")
-    else:
-        with st.container(border=True):
-            c1, c2 = st.columns([1,1])
-            with c1:
-                selected_role = st.selectbox("System Prompt", list(roles_data.keys()))
-            with c2:
-                model_name = st.selectbox("Model", available_models)
-            
-            st.caption(f"Preview: {roles_data[selected_role][:80]}...")
-            st.markdown("")
-            
-            if st.button("Start", type="primary"):
-                new_id = str(uuid.uuid4())
-                chats_data[new_id] = {
-                    "title": "New Chat",
-                    "role": selected_role,
-                    "model": model_name,
-                    "messages": []
-                }
-                save_data("chats.json", chats_data, chats_sha)
-                st.session_state.current_chat_id = new_id
-                st.rerun()
-
-# 场景 B: 聊天页
-else:
-    chat_id = st.session_state.current_chat_id
-    if chat_id not in chats_data:
-        st.session_state.current_chat_id = None
-        st.rerun()
-        
-    current_chat = chats_data[chat_id]
-    role_name = current_chat.get("role", "Default")
-    role_prompt = roles_data.get(role_name, "")
-    messages = current_chat.get("messages", [])
-    model_ver = current_chat.get("model", "gemini-1.5-pro")
-
-    # 顶部极简信息条 (手写 HTML 模拟导航栏)
-    st.markdown(f"""
-    <div class="top-nav">
-        <b>{role_name}</b> <span style="color:#666; margin-left:10px;">{model_ver}</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # 删除按钮独立放右上角太难对齐，直接放到底部或者作为小功能
-    # 这里为了极致简洁，我们把删除放在侧边栏或者新建时处理，或者在底部放一个小小的文本按钮
-    
-    # 聊天流
-    for msg in messages:
-        # 纯黑白头像
-        avatar = "▪️" if msg["role"] == "user" else "▫️"
+    for msg in st.session_state.flash_messages:
+        avatar = "▪️" if msg["role"] == "user" else "⚡"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                with st.expander("📄 Copy"): st.code(msg["content"], language=None)
 
-    # 输入框
-    if user_input := st.chat_input("Type a message..."):
-        with st.chat_message("user", avatar="▪️"):
-            st.markdown(user_input)
+    if user_input := st.chat_input("Ask..."):
+        with st.chat_message("user", avatar="▪️"): st.markdown(user_input)
+        st.session_state.flash_messages.append({"role": "user", "content": user_input})
         
-        messages.append({"role": "user", "content": user_input})
-        if len(messages) == 1: current_chat["title"] = user_input[:15]
-        
-        try:
-            model = genai.GenerativeModel(model_ver, system_instruction=role_prompt)
-            history_gemini = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in messages[:-1]]
-            chat = model.start_chat(history=history_gemini)
+        with st.chat_message("assistant", avatar="⚡"):
+            placeholder = st.empty()
+            start_time = time.time()
+            # 状态反馈
+            with st.status("Thinking...", expanded=True) as status:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    history = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in st.session_state.flash_messages[:-1]]
+                    chat = model.start_chat(history=history)
+                    
+                    full = ""
+                    for chunk in chat.send_message(user_input, stream=True):
+                        if chunk.text: full += chunk.text; placeholder.markdown(full + "▌")
+                    placeholder.markdown(full)
+                    
+                    status.update(label=f"Done ({time.time()-start_time:.2f}s)", state="complete", expanded=False)
+                    st.session_state.flash_messages.append({"role": "assistant", "content": full})
+                except Exception as e:
+                    status.update(label="Error", state="error")
+                    st.error(f"{e}")
+
+# >>>>>>>>>> 模式二：项目模式 (Project) <<<<<<<<<<
+else:
+    if "current_chat_id" not in st.session_state: st.session_state.current_chat_id = None
+    roles_data, roles_sha = load_data("roles.json")
+    chats_data, chats_sha = load_data("chats.json")
+
+    with st.sidebar:
+        if st.button("＋ New Project", type="primary", use_container_width=True):
+            st.session_state.current_chat_id = None; st.rerun()
+        if chats_data:
+            for cid in list(chats_data.keys())[::-1]:
+                title = chats_data[cid].get('title', 'Untitled')
+                btype = "primary" if st.session_state.current_chat_id == cid else "secondary"
+                if st.button(title, key=cid, use_container_width=True, type=btype):
+                    st.session_state.current_chat_id = cid; st.rerun()
+        st.markdown("---")
+        with st.expander("Roles"):
+            nn = st.text_input("Name"); np = st.text_area("Prompt")
+            if st.button("Save"):
+                if nn and np: roles_data[nn]=np; save_data("roles.json", roles_data, roles_sha); st.rerun()
+
+    if st.session_state.current_chat_id is None:
+        st.markdown("#### New Project")
+        if not roles_data: st.info("Create a role first.")
+        else:
+            with st.container(border=True):
+                c1, c2 = st.columns(2)
+                with c1: sr = st.selectbox("Role", list(roles_data.keys()))
+                with c2: sm = st.selectbox("Model", available_models)
+                if st.button("Start", type="primary"):
+                    nid = str(uuid.uuid4())
+                    chats_data[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
+                    save_data("chats.json", chats_data, chats_sha)
+                    st.session_state.current_chat_id = nid; st.rerun()
+    else:
+        cid = st.session_state.current_chat_id
+        if cid in chats_data:
+            curr = chats_data[cid]
+            msgs = curr.get("messages", [])
+            st.markdown(f"<div style='border-bottom:1px solid #eee; padding-bottom:10px; margin-bottom:10px'><b>{curr.get('role')}</b> <span style='color:#999;font-size:12px'>{curr.get('model')}</span></div>", unsafe_allow_html=True)
             
-            with st.chat_message("assistant", avatar="▫️"):
-                placeholder = st.empty()
-                full_response = ""
-                stream = chat.send_message(user_input, stream=True)
-                for chunk in stream:
-                    if chunk.text:
-                        full_response += chunk.text
-                        placeholder.markdown(full_response + "▌")
-                placeholder.markdown(full_response)
-            
-            messages.append({"role": "assistant", "content": full_response})
-            current_chat["messages"] = messages
-            chats_data[chat_id] = current_chat
-            save_data("chats.json", chats_data, chats_sha, message=f"Chat {chat_id}")
-            
-        except Exception as e:
-            st.error(f"Error: {e}")
-    
-    # 底部极简删除
-    if st.button("Delete Chat", key="del_bottom"):
-        del chats_data[chat_id]
-        save_data("chats.json", chats_data, chats_sha)
-        st.session_state.current_chat_id = None
-        st.rerun()
+            for msg in msgs:
+                avatar = "▪️" if msg["role"] == "user" else "▫️"
+                with st.chat_message(msg["role"], avatar=avatar):
+                    st.markdown(msg["content"])
+                    if msg["role"] == "assistant":
+                        with st.expander("📄 Copy"): st.code(msg["content"], language=None)
+
+            if user_input := st.chat_input("Type..."):
+                with st.chat_message("user", avatar="▪️"): st.markdown(user_input)
+                msgs.append({"role": "user", "content": user_input})
+                if len(msgs)==1: curr["title"] = user_input[:15]
+                
+                with st.chat_message("assistant", avatar="▫️"):
+                    placeholder = st.empty()
+                    start_time = time.time()
+                    # 状态反馈
+                    with st.status("Thinking...", expanded=True) as status:
+                        try:
+                            model = genai.GenerativeModel(curr.get("model"), system_instruction=roles_data.get(curr.get("role"), ""))
+                            chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
+                            
+                            full = ""
+                            for chunk in chat.send_message(user_input, stream=True):
+                                if chunk.text: full += chunk.text; placeholder.markdown(full + "▌")
+                            placeholder.markdown(full)
+                            
+                            status.update(label="Saving...", state="running")
+                            msgs.append({"role": "assistant", "content": full})
+                            curr["messages"] = msgs
+                            chats_data[cid] = curr
+                            
+                            if save_data("chats.json", chats_data, chats_sha, message=f"Chat {cid}"):
+                                status.update(label=f"Done ({time.time()-start_time:.2f}s)", state="complete", expanded=False)
+                            else:
+                                status.update(label="Save Error", state="error")
+                        except Exception as e:
+                            status.update(label="Error", state="error")
+                            st.error(f"{e}")
