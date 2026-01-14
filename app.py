@@ -56,8 +56,10 @@ with st.sidebar:
     )
     
     # 4. 模型选择
-    model_version = st.selectbox("选择大脑版本", ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"])
-    
+ model_version = st.selectbox(
+        "选择大脑版本", 
+        ["gemini-3.0-pro", "gemini-3.0-flash", "gemini-2.0-flash"]
+    )    
     # 5. 清除历史按钮
     if st.button("🗑️ 清空当前对话", use_container_width=True):
         st.session_state.messages = []
