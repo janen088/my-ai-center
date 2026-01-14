@@ -1,6 +1,6 @@
 [theme]
-primaryColor = "#1A73E8"    # Google Blue (按钮、输入框聚焦颜色)
-backgroundColor = "#FFFFFF" # 纯白背景
-secondaryBackgroundColor = "#F8F9FA" # 侧边栏极淡灰 (Google系通用底色)
-textColor = "#202124"       # Google 深灰字体 (比纯黑柔和)
-font = "sans serif"         # 无衬线字体
+primaryColor = "#000000"        # 核心交互色：纯黑
+backgroundColor = "#FFFFFF"     # 背景：纯白
+secondaryBackgroundColor = "#F7F7F7" # 侧边栏：极浅灰
+textColor = "#1a1a1a"           # 文字：近乎纯黑
+font = "sans serif"
