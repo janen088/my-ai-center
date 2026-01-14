@@ -33,11 +33,9 @@ st.markdown("""
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
     .stStatusWidget { background-color: #fff !important; border: 1px solid #eee !important; }
     .streamlit-expanderHeader { font-size: 12px !important; color: #666 !important; }
-
-    /* --- 右侧导航栏样式优化 --- */
-    div[data-testid="column"] {
-        transition: all 0.3s;
-    }
+    
+    /* --- 输入框微调 --- */
+    div[data-testid="stTextInput"] input { font-size: 13px; color: #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -180,47 +178,57 @@ else:
             curr = chats_data[cid]
             msgs = curr.get("messages", [])
             
-            # === 核心布局：左聊天(75%)，右导航(25%) ===
+            # === 布局：左聊天(75%)，右管理(25%) ===
             col_chat, col_nav = st.columns([3, 1])
             
-            # --- 右侧：时光机导航 ---
+            # --- 右侧：控制面板 (管理 + 时光机) ---
             with col_nav:
-                st.markdown(f"**{curr.get('role')}**")
-                st.caption(f"{curr.get('model')}")
+                st.markdown("#### Settings")
+                
+                # 1. 重命名功能
+                new_title = st.text_input("Title", value=curr.get('title', ''))
+                if st.button("Update Title"):
+                    if new_title and new_title != curr.get('title'):
+                        curr['title'] = new_title
+                        chats_data[cid] = curr
+                        save_data("chats.json", chats_data, chats_sha)
+                        st.toast("Title Updated!")
+                        time.sleep(0.5)
+                        st.rerun()
+                
+                # 2. 删除功能
+                if st.button("🗑️ Delete Chat"):
+                    del chats_data[cid]
+                    save_data("chats.json", chats_data, chats_sha)
+                    st.session_state.current_chat_id = None
+                    st.rerun()
+                
                 st.divider()
                 
-                # 计算总轮数 (1问1答算1轮)
-                total_turns = len(msgs) // 2
+                # 3. 时光机导航
+                st.markdown(f"**{curr.get('role')}**")
+                st.caption(f"{curr.get('model')}")
                 
-                # 导航模式选择
+                total_turns = len(msgs) // 2
                 nav_mode = st.radio("View", ["Full History", "Focus Mode"], horizontal=True, label_visibility="collapsed")
                 
                 if nav_mode == "Focus Mode" and total_turns > 0:
-                    # 滑动条：选择第几轮
-                    selected_turn = st.slider("Jump to Turn", 1, total_turns, total_turns)
-                    st.caption(f"Showing Turn {selected_turn} / {total_turns}")
-                    
-                    # 预览该轮的问题
+                    selected_turn = st.slider("Turn", 1, total_turns, total_turns)
                     try:
                         q_preview = msgs[(selected_turn-1)*2]["content"]
-                        st.info(f"Q: {q_preview[:50]}...")
+                        st.info(f"Q: {q_preview[:40]}...")
                     except: pass
                 else:
                     selected_turn = None
             
             # --- 左侧：聊天显示区 ---
             with col_chat:
-                # 根据导航筛选显示的每一条消息
                 if selected_turn:
-                    # Focus 模式：只显示选中的那一轮 (问+答)
                     start_idx = (selected_turn - 1) * 2
                     end_idx = start_idx + 2
                     display_msgs = msgs[start_idx:end_idx]
-                    
-                    # 提示用户当前是只看局部
-                    st.warning(f"👀 Viewing Turn {selected_turn} only. Switch to 'Full History' on the right to see all.")
+                    st.warning(f"👀 Focusing on Turn {selected_turn}")
                 else:
-                    # 全览模式
                     display_msgs = msgs
 
                 for msg in display_msgs:
@@ -230,11 +238,8 @@ else:
                         if msg["role"] == "assistant":
                             with st.expander("📄 Copy"): st.code(msg["content"], language=None)
 
-                # 输入框 (始终在底部)
                 if user_input := st.chat_input("Type..."):
-                    # 如果在 Focus 模式下提问，自动切回全览，防止逻辑混乱
-                    if selected_turn:
-                        st.toast("Switched to Full History for new message")
+                    if selected_turn: st.toast("Switched to Full History")
                     
                     with st.chat_message("user", avatar="▪️"): st.markdown(user_input)
                     msgs.append({"role": "user", "content": user_input})
@@ -246,7 +251,6 @@ else:
                         with st.status("Thinking...", expanded=True) as status:
                             try:
                                 model = genai.GenerativeModel(curr.get("model"), system_instruction=roles_data.get(curr.get("role"), ""))
-                                # 注意：发给 AI 的永远是完整历史 msgs，不受显示影响
                                 chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
                                 
                                 full = ""
@@ -267,6 +271,5 @@ else:
                                 status.update(label="Error", state="error")
                                 st.error(f"{e}")
                     
-                    # 强制刷新以显示新消息
                     time.sleep(0.5)
                     st.rerun()
