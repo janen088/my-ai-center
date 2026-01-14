@@ -31,12 +31,12 @@ st.markdown("""
     div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
     div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
     
+    /* 侧边栏按钮紧凑化 */
+    div[data-testid="column"] { padding: 0px 2px; }
+    
     /* 聊天气泡 */
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
-    
-    /* Popover (菜单) 样式微调 */
-    div[data-testid="stPopoverBody"] { padding: 10px !important; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -124,24 +124,55 @@ if app_mode == "⚡ Flash":
                 except Exception as e:
                     status.update(label="Error", state="error"); st.error(f"{e}")
 
-# >>>>>>>>>> 场景 B: 项目模式 (单栏 + 顶部菜单) <<<<<<<<<<
+# >>>>>>>>>> 场景 B: 项目模式 (侧边栏直接管理) <<<<<<<<<<
 else:
     if "curr_id" not in st.session_state: st.session_state.curr_id = None
     roles, roles_sha = load_data("roles.json")
     chats, chats_sha = load_data("chats.json")
 
-    # 左侧栏
+    # === 左侧栏：列表 + 管理 ===
     with st.sidebar:
         if st.button("＋ New Project", type="primary", use_container_width=True):
             st.session_state.curr_id = None; st.rerun()
         
         st.caption("History")
         if chats:
+            # 倒序遍历所有对话
             for cid in list(chats.keys())[::-1]:
-                title = chats[cid].get('title', 'Untitled')
-                btype = "primary" if st.session_state.curr_id == cid else "secondary"
-                if st.button(title, key=cid, use_container_width=True, type=btype):
-                    st.session_state.curr_id = cid; st.rerun()
+                c_data = chats[cid]
+                title = c_data.get('title', 'Untitled')
+                
+                # 使用两列布局：左边是大按钮(进入)，右边是小按钮(管理)
+                col1, col2 = st.columns([5, 1])
+                
+                with col1:
+                    # 选中状态高亮
+                    btype = "primary" if st.session_state.curr_id == cid else "secondary"
+                    if st.button(title, key=f"open_{cid}", use_container_width=True, type=btype):
+                        st.session_state.curr_id = cid
+                        st.rerun()
+                
+                with col2:
+                    # 弹出式菜单 (Popover)
+                    with st.popover("⋮", use_container_width=True):
+                        st.markdown("**Manage**")
+                        # 1. 改名
+                        new_name = st.text_input("Name", value=title, key=f"name_{cid}")
+                        if st.button("Save", key=f"save_{cid}", use_container_width=True):
+                            if new_name != title:
+                                chats[cid]['title'] = new_name
+                                save_data("chats.json", chats, chats_sha)
+                                st.rerun()
+                        
+                        st.divider()
+                        # 2. 删除
+                        if st.button("Delete", key=f"del_{cid}", type="primary", use_container_width=True):
+                            del chats[cid]
+                            save_data("chats.json", chats, chats_sha)
+                            # 如果删的是当前正在看的，就退回到新建页
+                            if st.session_state.curr_id == cid:
+                                st.session_state.curr_id = None
+                            st.rerun()
         else:
             st.info("No chats.")
             
@@ -151,10 +182,10 @@ else:
             if st.button("Save"):
                 if rn and rp: roles[rn]=rp; save_data("roles.json", roles, roles_sha); st.rerun()
 
-    # 主界面
+    # === 主界面 ===
     if st.session_state.curr_id is None:
         st.markdown("#### New Project")
-        if not roles: st.warning("Create a role first.")
+        if not roles: st.warning("Create a role in sidebar.")
         else:
             with st.container(border=True):
                 c1, c2 = st.columns(2)
@@ -171,29 +202,8 @@ else:
             curr = chats[cid]
             msgs = curr.get("messages", [])
             
-            # === 顶部导航栏 (轻量化管理) ===
-            # 使用两列：左边显示信息，右边放一个“设置”按钮
-            c_info, c_menu = st.columns([8, 1])
-            
-            with c_info:
-                # 显示：标题 [角色 | 模型]
-                st.markdown(f"**{curr.get('title')}** <span style='color:#888; font-size:12px; margin-left:10px'>{curr.get('role')} · {curr.get('model')}</span>", unsafe_allow_html=True)
-            
-            with c_menu:
-                # === 核心：弹出式菜单 ===
-                with st.popover("⚙️", use_container_width=True):
-                    st.markdown("**Settings**")
-                    new_t = st.text_input("Rename", value=curr.get('title',''))
-                    if st.button("Save Name", use_container_width=True):
-                        if new_t != curr.get('title'):
-                            curr['title'] = new_t; chats[cid] = curr
-                            save_data("chats.json", chats, chats_sha); st.rerun()
-                    
-                    st.divider()
-                    if st.button("🗑️ Delete Chat", type="primary", use_container_width=True):
-                        del chats[cid]; save_data("chats.json", chats, chats_sha)
-                        st.session_state.curr_id = None; st.rerun()
-
+            # 顶部简单信息
+            st.markdown(f"**{curr.get('title')}** <span style='color:#888; font-size:12px; margin-left:10px'>{curr.get('role')} · {curr.get('model')}</span>", unsafe_allow_html=True)
             st.divider()
 
             # 聊天内容
