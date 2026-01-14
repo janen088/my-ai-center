@@ -64,51 +64,25 @@ repo_name = st.secrets.get("REPO_NAME")
 if not api_key: st.stop()
 genai.configure(api_key=api_key)
 
-# === 核心修改：火力全开模型列表 ===
+# === 核心修改：老实人模式 ===
 @st.cache_data(ttl=3600)
 def get_available_models():
     try:
-        # 1. 手动硬编码所有可能的“神仙模型” (不管能不能用，先加上)
-        # gemini-experimental 通常指向最新的测试版 (可能是 3.0)
-        manual_list = [
-            "gemini-experimental", 
-            "gemini-2.0-flash-thinking-exp-1219",
-            "gemini-2.0-flash-exp",
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash",
-            # 如果 Google 开放了特定 ID，通常长这样，先加上防身
-            "gemini-3.0-pro-preview",
-            "gemini-3.0-pro-exp"
-        ]
-        
-        # 2. 从 API 获取所有官方列表 (不做任何过滤)
-        api_list = []
+        model_list = []
+        # 直接问 Google：你有什么？
         for m in genai.list_models():
-            # 只要支持生成内容，就拿来
-            if 'generateContent' in m.supported_generation_methods:
+            # 条件1: 支持生成内容
+            # 条件2: 名字里带 gemini
+            if 'generateContent' in m.supported_generation_methods and "gemini" in m.name:
+                # 去掉前缀，只留纯名字
                 clean_name = m.name.replace("models/", "")
-                api_list.append(clean_name)
+                model_list.append(clean_name)
         
-        # 3. 合并 + 去重 + 排序
-        # set 去重，然后转回 list
-        full_set = set(manual_list + api_list)
-        full_list = list(full_set)
-        
-        # 4. 排序逻辑：把 manual_list 里的东西强制排在最前面
-        # 这样你可以优先选到最新的，剩下的按字母倒序
-        final_list = []
-        for m in manual_list:
-            if m in full_list:
-                final_list.append(m)
-                full_list.remove(m)
-        
-        final_list += sorted(full_list, reverse=True)
-        
-        return final_list
+        # 纯字母倒序排列 (通常 2.0 > 1.5，所以数字大的会在前面)
+        return sorted(model_list, reverse=True)
     except Exception as e:
-        # 就算报错，也至少返回手动列表，保证有得选
-        return ["gemini-experimental", "gemini-1.5-pro"]
+        # 万一断网了，给个保底
+        return ["gemini-1.5-pro", "gemini-1.5-flash"]
 
 def load_data(filename):
     try:
