@@ -116,11 +116,5 @@
     "role": "运动专家",
     "model": "gemini-robotics-er-1.5-preview",
     "messages": []
-  },
-  "a8267520-32a8-448e-b2c6-72fade58e9aa": {
-    "title": "New Chat",
-    "role": "运动专家",
-    "model": "gemini-robotics-er-1.5-preview",
-    "messages": []
   }
 }
