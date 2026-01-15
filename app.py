@@ -5,57 +5,64 @@ import json
 import uuid
 import time
 
-# ================= 1. 系统配置 =================
+# ================= 1. 系统配置 & 核弹级 CSS =================
 st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
     layout="wide",
-    initial_sidebar_state="collapsed" # 手机上默认收起侧边栏，因为我们有主页列表了
+    initial_sidebar_state="collapsed" # 手机优先，默认收起侧边栏
 )
 
 st.markdown("""
 <style>
-    /* --- 全局字体 --- */
-    html, body, [class*="css"] { font-family: 'Inter', 'Roboto', sans-serif; color: #1a1a1a; font-size: 14px; }
+    /* --- 全局字体基准 (强制小字号) --- */
+    html, body, [class*="css"] { 
+        font-family: 'Inter', 'Roboto', sans-serif; 
+        color: #1a1a1a; 
+        font-size: 14px; 
+    }
+
+    /* --- 标题暴力压制 (无论 AI 输出什么 H1-H6，全部压扁) --- */
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, 
+    .stMarkdown h4, .stMarkdown h5, .stMarkdown h6,
+    .stMarkdown strong { 
+        font-size: 15px !important; 
+        font-weight: 600 !important; 
+        margin: 8px 0 !important;
+        line-height: 1.5 !important;
+    }
+    /* H1 稍微大一丢丢作为区分 */
+    .stMarkdown h1 { font-size: 16px !important; border-bottom: 1px solid #eee; padding-bottom: 5px; }
     
-    /* --- 标题压制 --- */
-    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { font-size: 16px !important; font-weight: 600 !important; margin: 10px 0 !important; }
-    
-    /* --- 暴力隐藏 Streamlit 官方水印和按钮 (防误触) --- */
+    /* 正文和列表 */
+    .stMarkdown p, .stMarkdown li { font-size: 14px !important; line-height: 1.6 !important; }
+
+    /* --- 暴力隐藏 Streamlit 官方元素 (防误触) --- */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    .stDeployButton {display:none;} /* 隐藏右上角 Deploy 按钮 */
-    div[data-testid="stDecoration"] {display:none;} /* 隐藏顶部彩条 */
+    .stDeployButton {display:none;}
+    div[data-testid="stDecoration"] {display:none;}
     
-    /* --- 界面优化 --- */
+    /* --- 界面容器优化 --- */
     section[data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E0E0E0; }
     
-    /* --- 按钮优化 (手机上更好点) --- */
+    /* --- 按钮优化 (手机手指友好) --- */
     div.stButton > button { 
         background-color: #FFF; border: 1px solid #D1D1D1; color: #333; 
-        border-radius: 8px; /* 更圆润 */
-        font-size: 14px; 
-        padding: 10px 15px; /* 更大的点击区域 */
-        min-height: 45px;   /* 手机手指好点 */
-        width: 100%;
+        border-radius: 8px; font-size: 14px; 
+        padding: 8px 15px; min-height: 42px; width: 100%;
     }
     div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
     div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
     
-    /* --- 聊天气泡 --- */
+    /* --- 聊天气泡 & 状态栏 --- */
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
+    .stStatusWidget { background-color: #fff !important; border: 1px solid #eee !important; }
     
-    /* --- 列表卡片样式 --- */
-    .chat-card {
-        padding: 15px;
-        border: 1px solid #eee;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        background: white;
-        cursor: pointer;
-    }
+    /* --- 列表卡片 --- */
+    .chat-list-item { padding: 10px; border-bottom: 1px solid #eee; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,7 +108,7 @@ def sync_to_github(filename, data, sha, message="Update"):
             return True, commit['content'].sha
     except: return False, sha
 
-# ================= 3. 状态管理 =================
+# ================= 3. 状态管理 (智能缓存) =================
 
 if "data_loaded" not in st.session_state:
     with st.spinner("Loading..."):
@@ -117,6 +124,7 @@ if "data_loaded" not in st.session_state:
 available_models = get_available_models()
 
 def auto_save_trigger(force=False):
+    """智能保存：每3次或强制时保存"""
     SAVE_THRESHOLD = 3
     should_save = force or (st.session_state.unsaved_count >= SAVE_THRESHOLD)
     if should_save:
@@ -129,7 +137,7 @@ def auto_save_trigger(force=False):
 
 # ================= 4. 界面逻辑 =================
 
-# 侧边栏只保留最基础的“全局设置”，平时不需要打开
+# 侧边栏：只放全局设置
 with st.sidebar:
     st.markdown("**Global Settings**")
     if st.button("Force Sync Now"):
@@ -143,49 +151,44 @@ with st.sidebar:
                 sync_to_github("roles.json", st.session_state.roles, st.session_state.roles_sha)
                 st.rerun()
 
-# 初始化当前 ID
+# 初始化页面路由
 if "curr_id" not in st.session_state: st.session_state.curr_id = None
 roles = st.session_state.roles
 chats = st.session_state.chats
 
-# >>>>>>>>>> 核心逻辑：主页即列表 (Lobby) <<<<<<<<<<
+# >>>>>>>>>> 视图 A: 首页列表 (Lobby) <<<<<<<<<<
 
 if st.session_state.curr_id is None:
-    # === 首页视图 (类似微信列表) ===
-    
-    # 顶部：新建按钮
+    # 顶部栏
     c1, c2 = st.columns([3, 1])
     with c1: st.markdown("### 💬 Chats")
     with c2: 
         if st.button("＋ New", type="primary", use_container_width=True):
-            # 进入新建流程
-            st.session_state.curr_id = "NEW_CREATION_MODE"
+            st.session_state.curr_id = "NEW_MODE"
             st.rerun()
     
     st.divider()
 
-    # 列表区域
+    # 列表显示
     if not chats:
-        st.info("No history. Start a new chat!")
+        st.info("No history.")
     else:
-        # 倒序显示，最近的在最上面
+        # 倒序遍历
         for cid in list(chats.keys())[::-1]:
             c_data = chats[cid]
             title = c_data.get('title', 'Untitled')
             role = c_data.get('role', 'Default')
-            model = c_data.get('model', 'Gemini')
-            msg_count = len(c_data.get('messages', [])) // 2
+            count = len(c_data.get('messages', [])) // 2
             
-            # 使用一个大按钮作为卡片
-            # 显示格式：标题 (角色 · 5条对话)
-            label = f"{title}\n[{role} · {msg_count} turns]"
-            
-            if st.button(label, key=f"card_{cid}", use_container_width=True):
+            # 卡片按钮
+            label = f"{title}\n[{role} · {count} turns]"
+            if st.button(label, key=f"c_{cid}", use_container_width=True):
                 st.session_state.curr_id = cid
                 st.rerun()
 
-elif st.session_state.curr_id == "NEW_CREATION_MODE":
-    # === 新建页面 ===
+# >>>>>>>>>> 视图 B: 新建页面 <<<<<<<<<<
+
+elif st.session_state.curr_id == "NEW_MODE":
     st.button("⬅️ Back", on_click=lambda: setattr(st.session_state, 'curr_id', None))
     st.markdown("#### Start New Chat")
     
@@ -195,28 +198,27 @@ elif st.session_state.curr_id == "NEW_CREATION_MODE":
         
         if st.button("Start Chat", type="primary", use_container_width=True):
             if not roles:
-                st.error("Please create a role in Sidebar first!")
+                st.error("Create a role in Sidebar first!")
             else:
                 nid = str(uuid.uuid4())
                 chats[nid] = {"title": "New Chat", "role": sel_r, "model": sel_m, "messages": []}
-                # 立即保存一次，防止新建后刷新丢失
-                auto_save_trigger(force=True)
+                auto_save_trigger(force=True) # 立即保存
                 st.session_state.curr_id = nid
                 st.rerun()
 
+# >>>>>>>>>> 视图 C: 对话详情页 (Chat) <<<<<<<<<<
+
 else:
-    # === 对话详情页 (Chat View) ===
     cid = st.session_state.curr_id
     if cid in chats:
         curr = chats[cid]
         msgs = curr.get("messages", [])
         
-        # 顶部导航栏：返回按钮 + 标题 + 菜单
+        # 顶部导航：返回 | 标题 | 设置
         c_back, c_title, c_menu = st.columns([1, 4, 1])
         with c_back:
             if st.button("⬅️", use_container_width=True):
-                # 返回首页前，强制保存
-                auto_save_trigger(force=True)
+                auto_save_trigger(force=True) # 退出前强制保存
                 st.session_state.curr_id = None
                 st.rerun()
         
@@ -233,21 +235,15 @@ else:
                     del chats[cid]; auto_save_trigger(force=True)
                     st.session_state.curr_id = None; st.rerun()
 
-        # 布局：在手机上会自动堆叠，在电脑上分栏
-        # 但为了手机体验，我们把时光机折叠起来
-        with st.expander("History Navigation (Time Machine)"):
+        # 时光机 (折叠式，节省手机空间)
+        with st.expander("History Navigation"):
             total = len(msgs) // 2
             if total > 0:
                 focus_idx = st.slider("Jump to Turn", 1, total, total)
-                try:
-                    q = msgs[(focus_idx-1)*2]["content"]
-                    st.caption(f"Q: {q[:50]}...")
-                except: pass
             else:
                 focus_idx = None
-                st.caption("No history yet.")
 
-        # 聊天区域
+        # 聊天显示
         if focus_idx and total > 0:
             start = (focus_idx - 1) * 2
             show_msgs = msgs[start : start+2]
@@ -270,22 +266,34 @@ else:
             
             with st.chat_message("assistant", avatar="▫️"):
                 ph = st.empty()
-                try:
-                    model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
-                    chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
-                    full = ""
-                    for chunk in chat.send_message(prompt, stream=True):
-                        if chunk.text: full+=chunk.text; ph.markdown(full + "▌")
-                    ph.markdown(full)
-                    
-                    msgs.append({"role": "assistant", "content": full})
-                    curr["messages"] = msgs; chats[cid] = curr
-                    
-                    # 缓存逻辑
-                    st.session_state.chats = chats
-                    st.session_state.unsaved_count += 1
-                    auto_save_trigger(force=False)
-                    
-                except Exception as e:
-                    st.error(f"{e}")
+                start_time = time.time()
+                
+                # === 状态反馈回归 ===
+                with st.status("Thinking...", expanded=True) as status:
+                    try:
+                        model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
+                        chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
+                        full = ""
+                        for chunk in chat.send_message(prompt, stream=True):
+                            if chunk.text: full+=chunk.text; ph.markdown(full + "▌")
+                        ph.markdown(full)
+                        
+                        msgs.append({"role": "assistant", "content": full})
+                        curr["messages"] = msgs; chats[cid] = curr
+                        
+                        # 智能缓存
+                        st.session_state.chats = chats
+                        st.session_state.unsaved_count += 1
+                        
+                        # 显示耗时
+                        elapsed = time.time() - start_time
+                        status.update(label=f"Done ({elapsed:.2f}s)", state="complete", expanded=False)
+                        
+                        # 触发自动保存检查
+                        auto_save_trigger(force=False)
+                        
+                    except Exception as e:
+                        status.update(label="Error", state="error"); st.error(f"{e}")
+            
+            # 刷新页面
             st.rerun()
