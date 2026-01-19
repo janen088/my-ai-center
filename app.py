@@ -5,7 +5,7 @@ import json
 import uuid
 import time
 
-# ================= 1. 系统配置 & 锚点 CSS =================
+# ================= 1. 系统配置 & 样式 =================
 st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
@@ -38,36 +38,21 @@ st.markdown("""
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
     
-    /* --- 右侧导航栏链接样式 --- */
+    /* --- 导航链接 --- */
     .nav-link {
-        display: block;
-        padding: 6px 10px;
-        margin-bottom: 4px;
-        text-decoration: none;
-        color: #555;
-        background-color: #f8f9fa;
-        border-radius: 4px;
-        border-left: 3px solid #ddd;
-        font-size: 13px;
-        transition: all 0.2s;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        display: block; padding: 6px 10px; margin-bottom: 4px; text-decoration: none;
+        color: #555; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #ddd;
+        font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .nav-link:hover {
-        background-color: #e8f0fe;
-        border-left-color: #1a73e8;
-        color: #1a73e8;
-    }
+    .nav-link:hover { background-color: #e8f0fe; border-left-color: #1a73e8; color: #1a73e8; }
     
-    /* 手机端隐藏右侧导航，防止布局错乱 */
     @media (max-width: 768px) {
         div[data-testid="column"]:nth-of-type(2) { display: none; }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 2. 后端服务 =================
+# ================= 2. 后端服务 (带重试机制) =================
 
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
@@ -95,23 +80,33 @@ def load_data(filename):
         except: return {}, None
     except: return {}, None
 
-def save_data(filename, data, sha, message="Update"):
-    try:
-        g = Github(github_token)
-        repo = g.get_repo(repo_name)
-        c_str = json.dumps(data, indent=2, ensure_ascii=False)
-        if sha:
-            commit = repo.update_file(filename, message, c_str, sha)
+def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
+    """
+    带重试机制的保存函数。
+    如果失败，会自动重试 3 次。
+    """
+    g = Github(github_token)
+    repo = g.get_repo(repo_name)
+    c_str = json.dumps(data, indent=2, ensure_ascii=False)
+    
+    for attempt in range(max_retries):
+        try:
+            if sha:
+                commit = repo.update_file(filename, message, c_str, sha)
+            else:
+                commit = repo.create_file(filename, "Init", c_str)
             return True, commit['content'].sha
-        else:
-            commit = repo.create_file(filename, "Init", c_str)
-            return True, commit['content'].sha
-    except: return False, sha
+        except Exception as e:
+            time.sleep(1) # 等1秒再试
+            if attempt == max_retries - 1:
+                print(f"Final Save Error: {e}")
+                return False, sha
+    return False, sha
 
-# ================= 3. 状态管理 =================
+# ================= 3. 状态初始化 =================
 
 if "data_loaded" not in st.session_state:
-    with st.spinner("Connecting..."):
+    with st.spinner("Syncing with Cloud..."):
         r_data, r_sha = load_data("roles.json")
         c_data, c_sha = load_data("chats.json")
         st.session_state.roles = r_data if r_data else {}
@@ -125,7 +120,7 @@ roles = st.session_state.roles
 chats = st.session_state.chats
 available_models = get_available_models()
 
-# ================= 4. 侧边栏 (全局导航) =================
+# ================= 4. 侧边栏 =================
 with st.sidebar:
     st.markdown("### AI Studio")
     if st.button("＋ New Chat", type="primary", use_container_width=True):
@@ -139,8 +134,14 @@ with st.sidebar:
         if st.button("Save Role"):
             if rn and rp: 
                 st.session_state.roles[rn]=rp
-                save_data("roles.json", st.session_state.roles, st.session_state.roles_sha)
-                st.rerun()
+                ok, new_sha = save_data_with_retry("roles.json", st.session_state.roles, st.session_state.roles_sha)
+                if ok:
+                    st.session_state.roles_sha = new_sha
+                    st.success("Saved!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("Save Failed!")
     
     st.divider()
     st.caption("History")
@@ -165,9 +166,14 @@ if st.session_state.curr_id == "NEW":
         if st.button("Start", type="primary", use_container_width=True):
             nid = str(uuid.uuid4())
             chats[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
-            save_data("chats.json", chats, st.session_state.chats_sha)
-            st.session_state.curr_id = nid
-            st.rerun()
+            # 立即保存
+            ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+            if ok:
+                st.session_state.chats_sha = new_sha
+                st.session_state.curr_id = nid
+                st.rerun()
+            else:
+                st.error("Network Error: Could not create chat.")
 
 # >>> 场景 B: 列表页 <<<
 elif st.session_state.curr_id is None:
@@ -181,7 +187,7 @@ elif st.session_state.curr_id is None:
                 st.session_state.curr_id = cid
                 st.rerun()
 
-# >>> 场景 C: 对话详情页 (带锚点导航) <<<
+# >>> 场景 C: 对话详情页 <<<
 else:
     cid = st.session_state.curr_id
     if cid in chats:
@@ -199,34 +205,33 @@ else:
             with st.popover("⚙️"):
                 nt = st.text_input("Name", value=curr.get('title',''))
                 if st.button("Save"):
-                    curr['title']=nt; save_data("chats.json", chats, st.session_state.chats_sha); st.rerun()
+                    curr['title']=nt
+                    ok, sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                    if ok: st.session_state.chats_sha = sha; st.rerun()
                 if st.button("Delete", type="primary"):
-                    del chats[cid]; save_data("chats.json", chats, st.session_state.chats_sha); st.session_state.curr_id=None; st.rerun()
+                    del chats[cid]
+                    ok, sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                    if ok: st.session_state.chats_sha = sha; st.session_state.curr_id=None; st.rerun()
         st.divider()
 
-        # === 核心布局：3:1 (左聊 右导) ===
+        # === 布局 ===
         col_chat, col_nav = st.columns([3, 1])
 
-        # --- 右侧：目录导航 (只在电脑显示，手机隐藏) ---
+        # --- 右侧：目录导航 ---
         with col_nav:
             st.markdown("**📌 Outline**")
-            # 遍历所有“用户提问”，生成链接
             if not msgs:
                 st.caption("No messages yet.")
             else:
-                for i in range(0, len(msgs), 2): # 步长为2，只取用户消息
+                for i in range(0, len(msgs), 2):
                     if msgs[i]['role'] == 'user':
                         q_text = msgs[i]['content']
-                        # 截取前25个字
-                        short_text = (q_text[:25] + '..') if len(q_text) > 25 else q_text
-                        # 生成锚点链接 (Markdown 语法: [文字](#id))
-                        # 注意：Streamlit 的锚点机制需要配合 HTML ID
+                        short_text = (q_text[:20] + '..') if len(q_text) > 20 else q_text
                         st.markdown(f"<a href='#turn_{i}' class='nav-link' target='_self'>{i//2 + 1}. {short_text}</a>", unsafe_allow_html=True)
 
-        # --- 左侧：平铺聊天流 ---
+        # --- 左侧：聊天流 ---
         with col_chat:
             for i, msg in enumerate(msgs):
-                # 如果是用户的消息，埋一个隐形的锚点 ID
                 if msg['role'] == 'user':
                     st.markdown(f"<div id='turn_{i}' style='height:0px; margin-top:-10px;'></div>", unsafe_allow_html=True)
                 
@@ -238,29 +243,49 @@ else:
 
             # 输入框
             if prompt := st.chat_input("Type..."):
+                # 1. 立即显示用户输入
                 with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
                 msgs.append({"role": "user", "content": prompt})
                 if len(msgs)==1: curr["title"] = prompt[:10]
                 
+                # 2. AI 生成
                 with st.chat_message("assistant", avatar="▫️"):
                     ph = st.empty()
                     start_t = time.time()
-                    with st.status("Thinking...", expanded=True) as status:
-                        try:
-                            model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
-                            chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
-                            full = ""
-                            for chunk in chat.send_message(prompt, stream=True):
-                                if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
-                            ph.markdown(full)
+                    
+                    # 状态容器
+                    status_container = st.status("Thinking...", expanded=True)
+                    try:
+                        model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
+                        chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
+                        
+                        full = ""
+                        for chunk in chat.send_message(prompt, stream=True):
+                            if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
+                        ph.markdown(full)
+                        
+                        # 3. 阻塞式保存 (Blocking Save)
+                        # 生成完毕后，必须先存到 GitHub，再进行下一步
+                        msgs.append({"role": "assistant", "content": full})
+                        curr["messages"] = msgs
+                        chats[cid] = curr
+                        
+                        status_container.update(label="Saving to Cloud (Do not close)...", state="running")
+                        
+                        # 调用带重试的保存函数
+                        ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                        
+                        if ok:
+                            st.session_state.chats_sha = new_sha
+                            status_container.update(label=f"Saved! ({time.time()-start_t:.1f}s)", state="complete", expanded=False)
+                            # 4. 保存成功后，强制刷新页面，确保多端同步
+                            time.sleep(0.5) 
+                            st.rerun()
+                        else:
+                            # 极少数情况：重试3次都失败
+                            status_container.update(label="CRITICAL ERROR: Save Failed!", state="error", expanded=True)
+                            st.error("Could not save to GitHub after 3 attempts. Please copy your chat manually.")
                             
-                            status.update(label="Saving...", state="running")
-                            msgs.append({"role": "assistant", "content": full})
-                            curr["messages"] = msgs; chats[cid] = curr
-                            
-                            if save_data("chats.json", chats, st.session_state.chats_sha):
-                                status.update(label=f"Done ({time.time()-start_t:.1f}s)", state="complete", expanded=False)
-                            else: status.update(label="Save Failed", state="error")
-                        except Exception as e:
-                            status.update(label="Error", state="error"); st.error(f"{e}")
-                st.rerun()
+                    except Exception as e:
+                        status_container.update(label="Error", state="error")
+                        st.error(f"{e}")
