@@ -243,12 +243,6 @@
       }
     ]
   },
-  "fd64d309-3aa1-48b2-a60d-74ac086be71a": {
-    "title": "New Chat",
-    "role": "教练二号",
-    "model": "gemini-3-pro-preview",
-    "messages": []
-  },
   "1d42f8ca-05a1-4335-aba6-f1b3dc6461f5": {
     "title": "你先记住我们之前聊的",
     "role": "运动专家",
