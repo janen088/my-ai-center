@@ -203,12 +203,6 @@
       }
     ]
   },
-  "47be72aa-4a56-455c-83d6-65bc1f7ebf2d": {
-    "title": "New Chat",
-    "role": "运动专家",
-    "model": "gemini-3-pro-preview",
-    "messages": []
-  },
   "fd64d309-3aa1-48b2-a60d-74ac086be71a": {
     "title": "New Chat",
     "role": "教练二号",
