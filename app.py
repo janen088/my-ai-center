@@ -5,7 +5,7 @@ import json
 import uuid
 import time
 
-# ================= 1. 系统配置 & 样式 =================
+# ================= 1. 系统配置 & 样式优化 =================
 st.set_page_config(
     page_title="AI Studio", 
     page_icon="▪️", 
@@ -52,7 +52,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 2. 后端服务 (带重试机制) =================
+# ================= 2. 后端服务 =================
 
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
@@ -81,10 +81,7 @@ def load_data(filename):
     except: return {}, None
 
 def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
-    """
-    带重试机制的保存函数。
-    如果失败，会自动重试 3 次。
-    """
+    """带重试的保存，防止网络抖动"""
     g = Github(github_token)
     repo = g.get_repo(repo_name)
     c_str = json.dumps(data, indent=2, ensure_ascii=False)
@@ -97,16 +94,15 @@ def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
                 commit = repo.create_file(filename, "Init", c_str)
             return True, commit['content'].sha
         except Exception as e:
-            time.sleep(1) # 等1秒再试
+            time.sleep(1)
             if attempt == max_retries - 1:
-                print(f"Final Save Error: {e}")
                 return False, sha
     return False, sha
 
 # ================= 3. 状态初始化 =================
 
 if "data_loaded" not in st.session_state:
-    with st.spinner("Syncing with Cloud..."):
+    with st.spinner("Connecting..."):
         r_data, r_sha = load_data("roles.json")
         c_data, c_sha = load_data("chats.json")
         st.session_state.roles = r_data if r_data else {}
@@ -166,7 +162,6 @@ if st.session_state.curr_id == "NEW":
         if st.button("Start", type="primary", use_container_width=True):
             nid = str(uuid.uuid4())
             chats[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
-            # 立即保存
             ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
             if ok:
                 st.session_state.chats_sha = new_sha
@@ -243,49 +238,65 @@ else:
 
             # 输入框
             if prompt := st.chat_input("Type..."):
-                # 1. 立即显示用户输入
+                # 1. 内存锁死 (Memory Lock)
+                # 这一步是瞬间完成的，你的输入立刻进入内存，不会丢
                 with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
                 msgs.append({"role": "user", "content": prompt})
                 if len(msgs)==1: curr["title"] = prompt[:10]
                 
-                # 2. AI 生成
+                # 关键：更新 session_state，防止脚本 crash 后数据丢失
+                curr["messages"] = msgs
+                chats[cid] = curr
+                st.session_state.chats = chats
+                
+                # 2. AI 生成 + 合并保存
                 with st.chat_message("assistant", avatar="▫️"):
                     ph = st.empty()
-                    start_t = time.time()
+                    status = st.status("Processing...", expanded=True)
                     
-                    # 状态容器
-                    status_container = st.status("Thinking...", expanded=True)
                     try:
+                        # A. 连接
+                        status.update(label="Connecting...", state="running")
                         model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
                         chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
                         
+                        # B. 生成
+                        status.update(label="Generating...", state="running")
                         full = ""
                         for chunk in chat.send_message(prompt, stream=True):
                             if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
                         ph.markdown(full)
                         
-                        # 3. 阻塞式保存 (Blocking Save)
-                        # 生成完毕后，必须先存到 GitHub，再进行下一步
+                        # C. 保存 (User + AI 一起存)
+                        status.update(label="Saving to Cloud...", state="running")
+                        
                         msgs.append({"role": "assistant", "content": full})
                         curr["messages"] = msgs
                         chats[cid] = curr
+                        st.session_state.chats = chats # 再次更新内存
                         
-                        status_container.update(label="Saving to Cloud (Do not close)...", state="running")
-                        
-                        # 调用带重试的保存函数
                         ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
                         
                         if ok:
                             st.session_state.chats_sha = new_sha
-                            status_container.update(label=f"Saved! ({time.time()-start_t:.1f}s)", state="complete", expanded=False)
-                            # 4. 保存成功后，强制刷新页面，确保多端同步
-                            time.sleep(0.5) 
-                            st.rerun()
+                            status.update(label="✅ Saved!", state="complete", expanded=False)
                         else:
-                            # 极少数情况：重试3次都失败
-                            status_container.update(label="CRITICAL ERROR: Save Failed!", state="error", expanded=True)
-                            st.error("Could not save to GitHub after 3 attempts. Please copy your chat manually.")
+                            # 失败兜底：显示红色警告，但文字不丢
+                            status.update(label="❌ Cloud Save Failed", state="error", expanded=True)
+                            st.error("Network Error: Data is safe in memory but not in cloud. Please copy text.")
                             
                     except Exception as e:
-                        status_container.update(label="Error", state="error")
-                        st.error(f"{e}")
+                        # 异常兜底：如果 AI 挂了，你的提问还在！
+                        status.update(label="Error", state="error")
+                        st.error(f"AI Error: {e}")
+                        
+                        # 提供手动保存按钮，保护你的提问
+                        if st.button("Retry Save (User Input)"):
+                            ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                            if ok: 
+                                st.session_state.chats_sha = new_sha
+                                st.success("User input saved!")
+                                time.sleep(1); st.rerun()
+                
+                # 3. 绝对不自动刷新
+                # 保持当前状态，防止闪退
