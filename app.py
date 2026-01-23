@@ -8,7 +8,7 @@ import time
 # ================= 1. 系统配置 & 样式优化 =================
 st.set_page_config(
     page_title="AI Studio", 
-    page_icon="▪️", 
+    page_icon="💰", 
     layout="wide",
     initial_sidebar_state="auto"
 )
@@ -21,9 +21,12 @@ st.markdown("""
     /* --- 标题压制 --- */
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { font-size: 16px !important; font-weight: 700 !important; margin: 10px 0 !important; }
     
-    /* --- 界面去噪 --- */
-    header, footer {visibility: hidden;} 
+    /* --- 关键修复：不再隐藏 header，确保侧边栏按钮可见 --- */
+    /* header {visibility: hidden;}  <-- 这行删掉了 */
+    footer {visibility: hidden;} 
     .stDeployButton, div[data-testid="stDecoration"] {display:none;}
+    
+    /* --- 侧边栏优化 --- */
     section[data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E0E0E0; }
     
     /* --- 按钮优化 --- */
@@ -37,6 +40,12 @@ st.markdown("""
     /* --- 聊天气泡 --- */
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
+    
+    /* --- 成本监控卡片 --- */
+    .cost-card {
+        background-color: #f0f2f6; padding: 10px; border-radius: 8px;
+        margin-bottom: 10px; font-size: 12px; border: 1px solid #e0e0e0;
+    }
     
     /* --- 导航链接 --- */
     .nav-link {
@@ -63,12 +72,14 @@ genai.configure(api_key=api_key)
 @st.cache_data(ttl=3600)
 def get_available_models():
     try:
-        model_list = []
+        priority = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
+        others = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods and "gemini" in m.name:
-                model_list.append(m.name.replace("models/", ""))
-        return sorted(model_list, reverse=True)
-    except: return ["gemini-1.5-pro", "gemini-1.5-flash"]
+                name = m.name.replace("models/", "")
+                if name not in priority: others.append(name)
+        return priority + sorted(others, reverse=True)
+    except: return ["gemini-1.5-flash", "gemini-1.5-pro"]
 
 def load_data(filename):
     try:
@@ -81,11 +92,9 @@ def load_data(filename):
     except: return {}, None
 
 def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
-    """带重试的保存，防止网络抖动"""
     g = Github(github_token)
     repo = g.get_repo(repo_name)
     c_str = json.dumps(data, indent=2, ensure_ascii=False)
-    
     for attempt in range(max_retries):
         try:
             if sha:
@@ -95,9 +104,17 @@ def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
             return True, commit['content'].sha
         except Exception as e:
             time.sleep(1)
-            if attempt == max_retries - 1:
-                return False, sha
+            if attempt == max_retries - 1: return False, sha
     return False, sha
+
+# 简单的 Token 估算
+def estimate_tokens(text):
+    return int(len(text) * 0.8)
+
+def calculate_cost(total_tokens, model_name):
+    input_price = 0.075 if "flash" in model_name.lower() else 3.50
+    cost_usd = (total_tokens / 1_000_000) * input_price
+    return cost_usd * 7.8
 
 # ================= 3. 状态初始化 =================
 
@@ -119,9 +136,32 @@ available_models = get_available_models()
 # ================= 4. 侧边栏 =================
 with st.sidebar:
     st.markdown("### AI Studio")
+    
+    # 成本监控
+    if st.session_state.curr_id and st.session_state.curr_id in chats:
+        curr = chats[st.session_state.curr_id]
+        msgs = curr.get("messages", [])
+        est_tokens = estimate_tokens("".join([m['content'] for m in msgs]))
+        curr_model = curr.get("model", "gemini-1.5-flash")
+        cost_now = calculate_cost(est_tokens, curr_model)
+        cost_flash = calculate_cost(est_tokens, "gemini-1.5-flash")
+        
+        st.markdown(f"""
+        <div class="cost-card">
+            <strong>📊 Cost Monitor (Next Turn)</strong><br>
+            History: {est_tokens:,} tokens<br>
+            Current: <span style="color:#d93025">${cost_now:.4f} HKD</span><br>
+            Flash: <span style="color:#188038">${cost_flash:.4f} HKD</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("💸 Cost Saver", expanded=True):
+        context_limit = st.slider("Context Limit", 5, 50, 20, help="Only send recent N turns.")
+    
     if st.button("＋ New Chat", type="primary", use_container_width=True):
         st.session_state.curr_id = "NEW"
         st.rerun()
+        
     st.divider()
     
     with st.expander("👤 Role Manager"):
@@ -131,13 +171,7 @@ with st.sidebar:
             if rn and rp: 
                 st.session_state.roles[rn]=rp
                 ok, new_sha = save_data_with_retry("roles.json", st.session_state.roles, st.session_state.roles_sha)
-                if ok:
-                    st.session_state.roles_sha = new_sha
-                    st.success("Saved!")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Save Failed!")
+                if ok: st.session_state.roles_sha = new_sha; st.success("Saved!"); time.sleep(0.5); st.rerun()
     
     st.divider()
     st.caption("History")
@@ -151,28 +185,34 @@ with st.sidebar:
 
 # ================= 5. 主界面 =================
 
-# >>> 场景 A: 新建 <<<
 if st.session_state.curr_id == "NEW":
     if st.button("⬅️ Back"): st.session_state.curr_id = None; st.rerun()
     st.markdown("#### New Chat")
     with st.container(border=True):
         c1, c2 = st.columns(2)
         with c1: sr = st.selectbox("Role", list(roles.keys()) if roles else ["Default"])
-        with c2: sm = st.selectbox("Model", available_models)
+        with c2: 
+            sm = st.selectbox("Model", available_models, index=0)
+            if "pro" in sm: st.warning("⚠️ Pro is expensive!")
+            
         if st.button("Start", type="primary", use_container_width=True):
             nid = str(uuid.uuid4())
             chats[nid] = {"title": "New Chat", "role": sr, "model": sm, "messages": []}
             ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
-            if ok:
-                st.session_state.chats_sha = new_sha
-                st.session_state.curr_id = nid
-                st.rerun()
-            else:
-                st.error("Network Error: Could not create chat.")
+            if ok: st.session_state.chats_sha = new_sha; st.session_state.curr_id = nid; st.rerun()
 
-# >>> 场景 B: 列表页 <<<
 elif st.session_state.curr_id is None:
-    st.markdown("### 💬 All Chats")
+    # === 首页列表 (Lobby) ===
+    # 修复：在这里也加一个新建按钮，防止侧边栏收起找不到入口
+    c1, c2 = st.columns([3, 1])
+    with c1: st.markdown("### 💬 All Chats")
+    with c2: 
+        if st.button("＋ New Chat", key="main_new_btn", type="primary", use_container_width=True):
+            st.session_state.curr_id = "NEW"
+            st.rerun()
+            
+    st.divider()
+    
     if not chats: st.info("No history.")
     else:
         for cid in list(chats.keys())[::-1]:
@@ -182,18 +222,15 @@ elif st.session_state.curr_id is None:
                 st.session_state.curr_id = cid
                 st.rerun()
 
-# >>> 场景 C: 对话详情页 <<<
 else:
     cid = st.session_state.curr_id
     if cid in chats:
         curr = chats[cid]
         msgs = curr.get("messages", [])
         
-        # 顶部栏
         c_back, c_info, c_menu = st.columns([1, 6, 1])
         with c_back:
-            if st.button("⬅️", use_container_width=True):
-                st.session_state.curr_id = None; st.rerun()
+            if st.button("⬅️", use_container_width=True): st.session_state.curr_id = None; st.rerun()
         with c_info:
             st.markdown(f"<div style='text-align:center;font-weight:bold;padding-top:8px'>{curr.get('title')}</div>", unsafe_allow_html=True)
         with c_menu:
@@ -209,94 +246,77 @@ else:
                     if ok: st.session_state.chats_sha = sha; st.session_state.curr_id=None; st.rerun()
         st.divider()
 
-        # === 布局 ===
         col_chat, col_nav = st.columns([3, 1])
-
-        # --- 右侧：目录导航 ---
         with col_nav:
             st.markdown("**📌 Outline**")
-            if not msgs:
-                st.caption("No messages yet.")
-            else:
+            if msgs:
                 for i in range(0, len(msgs), 2):
                     if msgs[i]['role'] == 'user':
                         q_text = msgs[i]['content']
                         short_text = (q_text[:20] + '..') if len(q_text) > 20 else q_text
                         st.markdown(f"<a href='#turn_{i}' class='nav-link' target='_self'>{i//2 + 1}. {short_text}</a>", unsafe_allow_html=True)
 
-        # --- 左侧：聊天流 ---
         with col_chat:
             for i, msg in enumerate(msgs):
-                if msg['role'] == 'user':
-                    st.markdown(f"<div id='turn_{i}' style='height:0px; margin-top:-10px;'></div>", unsafe_allow_html=True)
-                
+                if msg['role'] == 'user': st.markdown(f"<div id='turn_{i}' style='height:0px; margin-top:-10px;'></div>", unsafe_allow_html=True)
                 avatar = "▪️" if msg["role"] == "user" else "▫️"
                 with st.chat_message(msg["role"], avatar=avatar):
                     st.markdown(msg["content"])
                     if msg["role"] == "assistant":
                         with st.expander("Copy"): st.code(msg["content"], language=None)
 
-            # 输入框
             if prompt := st.chat_input("Type..."):
-                # 1. 内存锁死 (Memory Lock)
-                # 这一步是瞬间完成的，你的输入立刻进入内存，不会丢
                 with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
-                msgs.append({"role": "user", "content": prompt})
-                if len(msgs)==1: curr["title"] = prompt[:10]
                 
-                # 关键：更新 session_state，防止脚本 crash 后数据丢失
-                curr["messages"] = msgs
-                chats[cid] = curr
-                st.session_state.chats = chats
-                
-                # 2. AI 生成 + 合并保存
+                # 1. 内存锁死
+                with st.status("Saving input...", expanded=False) as s1:
+                    msgs.append({"role": "user", "content": prompt})
+                    if len(msgs)==1: curr["title"] = prompt[:10]
+                    curr["messages"] = msgs; chats[cid] = curr; st.session_state.chats = chats
+                    ok1, sha1 = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                    if ok1: st.session_state.chats_sha = sha1; s1.update(label="Input saved", state="complete")
+                    else: s1.update(label="Input save failed", state="error"); st.stop()
+
+                # 2. AI 生成
                 with st.chat_message("assistant", avatar="▫️"):
                     ph = st.empty()
                     status = st.status("Processing...", expanded=True)
-                    
                     try:
-                        # A. 连接
                         status.update(label="Connecting...", state="running")
-                        model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
-                        chat = model.start_chat(history=[{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in msgs[:-1]])
                         
-                        # B. 生成
-                        status.update(label="Generating...", state="running")
+                        limit_count = context_limit * 2
+                        history_to_send = msgs[:-1]
+                        if len(history_to_send) > limit_count:
+                            history_to_send = history_to_send[-limit_count:]
+                            if history_to_send and history_to_send[0]['role'] == 'model': history_to_send.pop(0)
+                        
+                        formatted = [{"role": ("user" if m["role"]=="user" else "model"), "parts": [m["content"]]} for m in history_to_send]
+                        
+                        model = genai.GenerativeModel(curr.get("model"), system_instruction=roles.get(curr.get("role"),""))
+                        chat = model.start_chat(history=formatted)
+                        
                         full = ""
-                        for chunk in chat.send_message(prompt, stream=True):
+                        for chunk in chat.send_message(prompt, stream=True, request_options={'timeout': 60}):
                             if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
                         ph.markdown(full)
-                        
-                        # C. 保存 (User + AI 一起存)
-                        status.update(label="Saving to Cloud...", state="running")
-                        
+                        if not full: raise Exception("Empty response")
+
+                        # 3. 保存回复
+                        status.update(label="Saving response...", state="running")
                         msgs.append({"role": "assistant", "content": full})
-                        curr["messages"] = msgs
-                        chats[cid] = curr
-                        st.session_state.chats = chats # 再次更新内存
+                        curr["messages"] = msgs; chats[cid] = curr; st.session_state.chats = chats
                         
-                        ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
-                        
-                        if ok:
-                            st.session_state.chats_sha = new_sha
+                        ok2, sha2 = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
+                        if ok2:
+                            st.session_state.chats_sha = sha2
                             status.update(label="✅ Saved!", state="complete", expanded=False)
                         else:
-                            # 失败兜底：显示红色警告，但文字不丢
-                            status.update(label="❌ Cloud Save Failed", state="error", expanded=True)
-                            st.error("Network Error: Data is safe in memory but not in cloud. Please copy text.")
+                            status.update(label="❌ Save Failed", state="error", expanded=True)
+                            st.error("Copy text manually.")
                             
                     except Exception as e:
-                        # 异常兜底：如果 AI 挂了，你的提问还在！
                         status.update(label="Error", state="error")
-                        st.error(f"AI Error: {e}")
-                        
-                        # 提供手动保存按钮，保护你的提问
-                        if st.button("Retry Save (User Input)"):
+                        st.error(f"{e}")
+                        if st.button("💾 Force Save"):
                             ok, new_sha = save_data_with_retry("chats.json", chats, st.session_state.chats_sha)
-                            if ok: 
-                                st.session_state.chats_sha = new_sha
-                                st.success("User input saved!")
-                                time.sleep(1); st.rerun()
-                
-                # 3. 绝对不自动刷新
-                # 保持当前状态，防止闪退
+                            if ok: st.session_state.chats_sha = new_sha; st.success("Saved!"); time.sleep(1); st.rerun()
