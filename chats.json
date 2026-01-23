@@ -1344,5 +1344,11 @@
     "role": "gemini",
     "model": "gemini-3-pro-preview",
     "messages": []
+  },
+  "3bb55c69-3c5b-42f8-8165-055dca7ddfa7": {
+    "title": "New Chat",
+    "role": "gemini",
+    "model": "gemini-3-pro-preview",
+    "messages": []
   }
 }
