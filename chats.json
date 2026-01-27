@@ -1387,5 +1387,11 @@
     "role": "命理师傅",
     "model": "gemini-3-pro-preview",
     "messages": []
+  },
+  "bda713f3-15dd-4af6-83c1-9b62109e36b6": {
+    "title": "New Chat",
+    "role": "运动专家",
+    "model": "gemini-3-pro-preview",
+    "messages": []
   }
 }
