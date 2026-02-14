@@ -4,64 +4,44 @@ from github import Github
 import json
 import uuid
 import time
+import base64
 
-# ================= 1. 系统配置 & 样式优化 =================
+# ================= 1. 系统配置 =================
 st.set_page_config(
     page_title="AI Studio", 
-    page_icon="💰", 
+    page_icon="⚡", 
     layout="wide",
     initial_sidebar_state="auto"
 )
 
 st.markdown("""
 <style>
-    /* --- 全局字体 --- */
+    /* 全局字体 */
     html, body, [class*="css"] { font-family: 'Inter', 'Roboto', sans-serif; color: #1a1a1a; font-size: 14px; }
-    
-    /* --- 标题压制 --- */
+    /* 标题压制 */
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { font-size: 16px !important; font-weight: 700 !important; margin: 10px 0 !important; }
-    
-    /* --- 关键修复：不再隐藏 header，确保侧边栏按钮可见 --- */
-    /* header {visibility: hidden;}  <-- 这行删掉了 */
+    /* 界面去噪 */
     footer {visibility: hidden;} 
     .stDeployButton, div[data-testid="stDecoration"] {display:none;}
-    
-    /* --- 侧边栏优化 --- */
     section[data-testid="stSidebar"] { background-color: #FAFAFA; border-right: 1px solid #E0E0E0; }
-    
-    /* --- 按钮优化 --- */
+    /* 按钮优化 */
     div.stButton > button { 
         background-color: #FFF; border: 1px solid #D1D1D1; color: #333; 
         border-radius: 6px; font-size: 14px; padding: 8px 12px; min-height: 40px; width: 100%;
     }
     div.stButton > button:hover { border-color: #000; color: #000; background-color: #F5F5F5; }
     div.stButton > button[kind="primary"] { background-color: #000; color: #FFF; border: 1px solid #000; }
-    
-    /* --- 聊天气泡 --- */
+    /* 聊天气泡 */
     .stChatMessage { background-color: transparent !important; border: none !important; padding: 5px 0px !important; }
     div[data-testid="stChatMessageAvatarUser"], div[data-testid="stChatMessageAvatarAssistant"] { background-color: #F0F0F0 !important; color: #000 !important; }
-    
-    /* --- 成本监控卡片 --- */
-    .cost-card {
-        background-color: #f0f2f6; padding: 10px; border-radius: 8px;
-        margin-bottom: 10px; font-size: 12px; border: 1px solid #e0e0e0;
-    }
-    
-    /* --- 导航链接 --- */
-    .nav-link {
-        display: block; padding: 6px 10px; margin-bottom: 4px; text-decoration: none;
-        color: #555; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #ddd;
-        font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
+    /* 导航链接 */
+    .nav-link { display: block; padding: 6px 10px; margin-bottom: 4px; text-decoration: none; color: #555; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #ddd; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .nav-link:hover { background-color: #e8f0fe; border-left-color: #1a73e8; color: #1a73e8; }
-    
-    @media (max-width: 768px) {
-        div[data-testid="column"]:nth-of-type(2) { display: none; }
-    }
+    @media (max-width: 768px) { div[data-testid="column"]:nth-of-type(2) { display: none; } }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 2. 后端服务 =================
+# ================= 2. 后端服务 (修复版) =================
 
 api_key = st.secrets.get("GEMINI_API_KEY")
 github_token = st.secrets.get("GITHUB_TOKEN")
@@ -81,14 +61,36 @@ def get_available_models():
         return priority + sorted(others, reverse=True)
     except: return ["gemini-1.5-flash", "gemini-1.5-pro"]
 
+# === 核心修复：更强健的数据读取 ===
 def load_data(filename):
     try:
         g = Github(github_token)
         repo = g.get_repo(repo_name)
         try:
-            c = repo.get_contents(filename)
-            return json.loads(c.decoded_content.decode()), c.sha
-        except: return {}, None
+            # 1. 获取文件对象
+            content_file = repo.get_contents(filename)
+            
+            # 2. 尝试标准解码
+            if content_file.encoding == "base64":
+                raw_data = base64.b64decode(content_file.content).decode('utf-8')
+            elif content_file.encoding == "none":
+                # 如果 GitHub 说 encoding 是 none，通常意味着文件太大，或者已经是纯文本
+                # 这种情况下，content_file.content 可能已经是解码后的字符串，或者需要直接用 decoded_content
+                try:
+                    raw_data = content_file.decoded_content.decode('utf-8')
+                except:
+                    # 兜底：如果上面失败，尝试直接读取 blob
+                    blob = repo.get_git_blob(content_file.sha)
+                    raw_data = base64.b64decode(blob.content).decode('utf-8')
+            else:
+                # 其他情况，尝试直接解码
+                raw_data = content_file.decoded_content.decode('utf-8')
+
+            return json.loads(raw_data), content_file.sha
+            
+        except Exception as e:
+            print(f"Load Error for {filename}: {e}")
+            return {}, None
     except: return {}, None
 
 def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
@@ -97,29 +99,18 @@ def save_data_with_retry(filename, data, sha, message="Update", max_retries=3):
     c_str = json.dumps(data, indent=2, ensure_ascii=False)
     for attempt in range(max_retries):
         try:
-            if sha:
-                commit = repo.update_file(filename, message, c_str, sha)
-            else:
-                commit = repo.create_file(filename, "Init", c_str)
+            if sha: commit = repo.update_file(filename, message, c_str, sha)
+            else: commit = repo.create_file(filename, "Init", c_str)
             return True, commit['content'].sha
         except Exception as e:
             time.sleep(1)
             if attempt == max_retries - 1: return False, sha
     return False, sha
 
-# 简单的 Token 估算
-def estimate_tokens(text):
-    return int(len(text) * 0.8)
-
-def calculate_cost(total_tokens, model_name):
-    input_price = 0.075 if "flash" in model_name.lower() else 3.50
-    cost_usd = (total_tokens / 1_000_000) * input_price
-    return cost_usd * 7.8
-
 # ================= 3. 状态初始化 =================
 
 if "data_loaded" not in st.session_state:
-    with st.spinner("Connecting..."):
+    with st.spinner("Loading Data (Large File Support)..."):
         r_data, r_sha = load_data("roles.json")
         c_data, c_sha = load_data("chats.json")
         st.session_state.roles = r_data if r_data else {}
@@ -137,24 +128,6 @@ available_models = get_available_models()
 with st.sidebar:
     st.markdown("### AI Studio")
     
-    # 成本监控
-    if st.session_state.curr_id and st.session_state.curr_id in chats:
-        curr = chats[st.session_state.curr_id]
-        msgs = curr.get("messages", [])
-        est_tokens = estimate_tokens("".join([m['content'] for m in msgs]))
-        curr_model = curr.get("model", "gemini-1.5-flash")
-        cost_now = calculate_cost(est_tokens, curr_model)
-        cost_flash = calculate_cost(est_tokens, "gemini-1.5-flash")
-        
-        st.markdown(f"""
-        <div class="cost-card">
-            <strong>📊 Cost Monitor (Next Turn)</strong><br>
-            History: {est_tokens:,} tokens<br>
-            Current: <span style="color:#d93025">${cost_now:.4f} HKD</span><br>
-            Flash: <span style="color:#188038">${cost_flash:.4f} HKD</span>
-        </div>
-        """, unsafe_allow_html=True)
-
     with st.expander("💸 Cost Saver", expanded=True):
         context_limit = st.slider("Context Limit", 5, 50, 20, help="Only send recent N turns.")
     
@@ -163,7 +136,6 @@ with st.sidebar:
         st.rerun()
         
     st.divider()
-    
     with st.expander("👤 Role Manager"):
         rn = st.text_input("Role Name")
         rp = st.text_area("Prompt")
@@ -202,17 +174,13 @@ if st.session_state.curr_id == "NEW":
             if ok: st.session_state.chats_sha = new_sha; st.session_state.curr_id = nid; st.rerun()
 
 elif st.session_state.curr_id is None:
-    # === 首页列表 (Lobby) ===
-    # 修复：在这里也加一个新建按钮，防止侧边栏收起找不到入口
     c1, c2 = st.columns([3, 1])
     with c1: st.markdown("### 💬 All Chats")
     with c2: 
         if st.button("＋ New Chat", key="main_new_btn", type="primary", use_container_width=True):
             st.session_state.curr_id = "NEW"
             st.rerun()
-            
     st.divider()
-    
     if not chats: st.info("No history.")
     else:
         for cid in list(chats.keys())[::-1]:
@@ -268,7 +236,6 @@ else:
             if prompt := st.chat_input("Type..."):
                 with st.chat_message("user", avatar="▪️"): st.markdown(prompt)
                 
-                # 1. 内存锁死
                 with st.status("Saving input...", expanded=False) as s1:
                     msgs.append({"role": "user", "content": prompt})
                     if len(msgs)==1: curr["title"] = prompt[:10]
@@ -277,7 +244,6 @@ else:
                     if ok1: st.session_state.chats_sha = sha1; s1.update(label="Input saved", state="complete")
                     else: s1.update(label="Input save failed", state="error"); st.stop()
 
-                # 2. AI 生成
                 with st.chat_message("assistant", avatar="▫️"):
                     ph = st.empty()
                     status = st.status("Processing...", expanded=True)
@@ -296,12 +262,22 @@ else:
                         chat = model.start_chat(history=formatted)
                         
                         full = ""
-                        for chunk in chat.send_message(prompt, stream=True, request_options={'timeout': 60}):
-                            if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
+                        max_gen_retries = 2
+                        for gen_attempt in range(max_gen_retries):
+                            try:
+                                current_timeout = 60 * (gen_attempt + 1)
+                                full = ""
+                                for chunk in chat.send_message(prompt, stream=True, request_options={'timeout': current_timeout}):
+                                    if chunk.text: full+=chunk.text; ph.markdown(full+"▌")
+                                if full: break 
+                            except Exception as e:
+                                if gen_attempt == max_gen_retries - 1: raise e
+                                status.update(label=f"Network busy (504), retrying...", state="running")
+                                time.sleep(2)
+                        
                         ph.markdown(full)
                         if not full: raise Exception("Empty response")
 
-                        # 3. 保存回复
                         status.update(label="Saving response...", state="running")
                         msgs.append({"role": "assistant", "content": full})
                         curr["messages"] = msgs; chats[cid] = curr; st.session_state.chats = chats
